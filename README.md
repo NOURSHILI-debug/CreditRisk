@@ -169,45 +169,6 @@ credit-risk-intelligence-platform/
 └── README.md
 ```
 
-## Team Responsibilities
-
-The project is developed collaboratively by two contributors, with separate ownership of the main technical components.
-
-### Person 1 — Data Engineering & Machine Learning
-
-Responsible for:
-
-- Dataset acquisition and exploration.
-- Kafka producer and consumer.
-- Data validation and transformation.
-- Raw and processed data storage.
-- XGBoost model development.
-- PyTorch LSTM sequence modeling.
-- Model evaluation and comparison.
-- SageMaker training and inference integration.
-- Prediction interfaces and model versioning.
-
-### Person 2 — Dashboard, AI Agent & Application
-
-Responsible for:
-
-- Streamlit dashboard development.
-- Application explorer and risk visualizations.
-- Dashboard data-access layer.
-- LangGraph / LangChain agent.
-- Tool calling and application data retrieval.
-- Prediction explanations.
-- Risk summaries and report generation.
-
-### Shared Responsibilities
-
-Both contributors participate in:
-
-- Architecture and interface design.
-- Integration and testing.
-- Security and cost management.
-- Technical documentation.
-- Final demonstration and presentation.
 
 ## Development Setup
 
@@ -253,17 +214,6 @@ pre-commit install
 pytest
 ```
 
-## Development Roadmap
-
-| Phase | Focus |
-|---|---|
-| Phase 0 | Repository, branches, development environment and code quality |
-| Phase 1 | Dataset exploration, architecture and shared schemas |
-| Phase 2 | XGBoost baseline and dashboard prototype |
-| Phase 3 | Kafka streaming and cloud data engineering |
-| Phase 4 | LSTM, model comparison and SageMaker |
-| Phase 5 | AI agent and end-to-end application |
-| Phase 6 | Integration, testing, documentation and final demonstration |
 
 ## Project Deliverables
 
@@ -286,21 +236,7 @@ pytest
 - **Cost awareness:** Prefer local development and provision cloud resources only when necessary.
 - **Collaboration:** Use feature branches, pull requests and documented interfaces.
 
-## Scope Limitations
 
-The initial version focuses on delivering a working, testable end-to-end platform.
-
-The following are outside the initial scope:
-
-- Hybrid XGBoost–LSTM architectures.
-- Multi-agent orchestration.
-- Kubernetes deployment.
-- Real banking integrations.
-- Automated lending decisions.
-
-Advanced features may be considered after the core deliverables are complete.
-
----
 
 **Project Status:** Initial Development / Phase 0
 
