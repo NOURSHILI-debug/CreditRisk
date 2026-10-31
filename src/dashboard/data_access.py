@@ -96,23 +96,18 @@ def get_overview_metrics() -> dict[str, Any]:
     }
 
 
-def get_model_metrics() -> dict[str, dict[str, float | str]]:
-    """Return illustrative model metrics used to render the comparison page."""
-    return {
-        "XGBoost": {
-            "ROC-AUC": 0.82,
-            "PR-AUC": 0.74,
-            "Precision": 0.68,
-            "Recall": 0.71,
-            "F1-score": 0.69,
-            "source": "mock",
-        },
-        "LSTM": {
-            "ROC-AUC": 0.79,
-            "PR-AUC": 0.72,
-            "Precision": 0.66,
-            "Recall": 0.70,
-            "F1-score": 0.67,
-            "source": "mock",
-        },
-    }
+def get_model_evaluation_results() -> Optional[pd.DataFrame]:
+    """Return model evaluation rows supplied by the evaluation pipeline.
+
+    The integration contract is a DataFrame with one row per model/metric pair
+    and the columns ``model``, ``metric``, and ``value``. Supported model IDs
+    are ``XGBoost`` and ``LSTM``; supported metric IDs are ``roc_auc``,
+    ``pr_auc``, ``precision``, ``recall``, and ``f1_score``. Values are numeric
+    scores in the inclusive range [0, 1]. A CSV or JSON adapter can be added
+    here once Person 1's output location and format are agreed.
+
+    No evaluation provider or result artifact is currently configured, so this
+    returns ``None`` rather than sample scores that could be mistaken for
+    experimental results.
+    """
+    return None
