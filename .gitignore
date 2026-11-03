@@ -102,3 +102,6 @@ desktop.ini
 *.bak
 *.swp
 *.swo
+
+# Generated SHAP report data
+docs/figures/shap/top_contributions.csv

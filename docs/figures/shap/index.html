@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Credit-risk SHAP report</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 1100px; color: #222; }
+    table { border-collapse: collapse; margin: 1rem 0 2rem; }
+    th, td { border-bottom: 1px solid #ddd; padding: 0.45rem 0.8rem; text-align: left; }
+    th { background: #f4f6f8; }
+    img { max-width: 100%; height: auto; border: 1px solid #ddd; }
+    section { margin: 2rem 0; }
+    code { background: #f4f6f8; padding: 0.1rem 0.3rem; }
+  </style>
+</head>
+<body>
+  <h1>Credit-risk SHAP report</h1>
+  <p>Model <code>XGBoost</code>
+     version <code>baseline-v2-local</code>.</p>
+  <p>Method: native XGBoost TreeSHAP in log-odds. Positive values increase
+     <code>P(TARGET=1)</code>; values are not causal and are not calibrated
+     probabilities.</p>
+  <h2>Global bar chart</h2>
+  <img src="bar_top20.png" alt="Global SHAP bar chart">
+  <h2>Beeswarm</h2>
+  <img src="beeswarm_top20.png" alt="SHAP beeswarm">
+  <h2>Top raw features</h2>
+  <table>
+    <thead><tr><th>Rank</th><th>Feature</th><th>Mean |SHAP|</th></tr></thead>
+    <tbody><tr><td>1</td><td>EXT_SOURCE_3</td><td>0.411747</td></tr>
+<tr><td>2</td><td>EXT_SOURCE_2</td><td>0.351668</td></tr>
+<tr><td>3</td><td>AMT_GOODS_PRICE</td><td>0.289577</td></tr>
+<tr><td>4</td><td>AMT_CREDIT</td><td>0.248542</td></tr>
+<tr><td>5</td><td>EXT_SOURCE_1</td><td>0.176940</td></tr>
+<tr><td>6</td><td>CODE_GENDER</td><td>0.129686</td></tr>
+<tr><td>7</td><td>DAYS_BIRTH</td><td>0.125184</td></tr>
+<tr><td>8</td><td>DAYS_EMPLOYED</td><td>0.122800</td></tr>
+<tr><td>9</td><td>AMT_ANNUITY</td><td>0.120342</td></tr>
+<tr><td>10</td><td>NAME_EDUCATION_TYPE</td><td>0.098542</td></tr>
+<tr><td>11</td><td>DAYS_ID_PUBLISH</td><td>0.095752</td></tr>
+<tr><td>12</td><td>ORGANIZATION_TYPE</td><td>0.073587</td></tr>
+<tr><td>13</td><td>DAYS_LAST_PHONE_CHANGE</td><td>0.070503</td></tr>
+<tr><td>14</td><td>FLAG_OWN_CAR</td><td>0.062000</td></tr>
+<tr><td>15</td><td>NAME_FAMILY_STATUS</td><td>0.055811</td></tr>
+<tr><td>16</td><td>OWN_CAR_AGE</td><td>0.055031</td></tr>
+<tr><td>17</td><td>NAME_CONTRACT_TYPE</td><td>0.052686</td></tr>
+<tr><td>18</td><td>DAYS_REGISTRATION</td><td>0.051028</td></tr>
+<tr><td>19</td><td>FLAG_DOCUMENT_3</td><td>0.047862</td></tr>
+<tr><td>20</td><td>REGION_POPULATION_RELATIVE</td><td>0.046720</td></tr></tbody>
+  </table>
+  <h2>Local examples</h2>
+  <section><h2>Application 172753</h2><p>Probability: 0.958929; base probability: 0.528277</p><p>Largest risk-increasing features: EXT_SOURCE_3, EXT_SOURCE_2, AMT_GOODS_PRICE. Largest risk-decreasing features: NAME_INCOME_TYPE, CODE_GENDER, DAYS_REGISTRATION.</p><img src="waterfall_172753.png" alt="Waterfall for 172753"></section>
+<section><h2>Application 339432</h2><p>Probability: 0.000213; base probability: 0.528277</p><p>Largest risk-increasing features: AMT_CREDIT, NONLIVINGAREA_AVG, WALLSMATERIAL_MODE. Largest risk-decreasing features: EXT_SOURCE_2, NAME_CONTRACT_TYPE, EXT_SOURCE_3.</p><img src="waterfall_339432.png" alt="Waterfall for 339432"></section>
+<section><h2>Application 120321</h2><p>Probability: 0.491503; base probability: 0.528277</p><p>Largest risk-increasing features: AMT_GOODS_PRICE, EXT_SOURCE_2, DAYS_EMPLOYED. Largest risk-decreasing features: EXT_SOURCE_1, DAYS_ID_PUBLISH, AMT_CREDIT.</p><img src="waterfall_120321.png" alt="Waterfall for 120321"></section>
+</body>
+</html>

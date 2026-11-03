@@ -1,0 +1,487 @@
+{
+  "generated_at": "2026-11-03T20:01:34.238424+00:00",
+  "method": "tree_shap_native_xgboost",
+  "output_space": "log_odds",
+  "model": {
+    "model_name": "XGBoost",
+    "model_version": "baseline-v2-local",
+    "model_hash": "75fd9738cb1a709b47f64c89126e8c5344d3a4d6368ef16c6870c960360a8497",
+    "model_dir": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\models\\local_v2"
+  },
+  "data": {
+    "source_data": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\data\\raw\\application_train.csv",
+    "source_predictions": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\models\\local_v2\\test_predictions.csv",
+    "source_split": "test",
+    "test_rows": 46127,
+    "sample_size": 2000,
+    "sample_seed": 42,
+    "class_counts_sample": {
+      "0": 1839,
+      "1": 161
+    }
+  },
+  "base_value": 0.11322737485170364,
+  "base_probability": 0.5282766402556108,
+  "scale_pos_weight": 11.38746619094205,
+  "base_probability_note": "The base probability reflects the training scale_pos_weight, not the population default rate, and is not calibrated.",
+  "feature_scope": {
+    "n_raw_features": 120,
+    "n_transformed_features": 306,
+    "missing_indicators_merged_into_parent": true,
+    "local_feature_names": "Local top_features retain transformed one-hot and [missing] indicator names."
+  },
+  "aggregation": "Per row, sum SHAP values across transformed columns for each raw feature, then average absolute values across sampled rows.",
+  "errors": {
+    "max_abs_additivity_error_sample": 6.242479059892503e-06,
+    "additivity_tolerance": 0.0001,
+    "max_abs_probability_reconstruction_error_sample": 7.085003705942228e-08,
+    "probability_tolerance": 1e-06,
+    "max_abs_probability_difference_full_test": 0.0
+  },
+  "local_examples": [
+    {
+      "application_id": 172753,
+      "y_true": 1,
+      "probability": 0.9589290618896484,
+      "base_probability": 0.5282766402556108,
+      "summary": "Largest risk-increasing features: EXT_SOURCE_3, EXT_SOURCE_2, AMT_GOODS_PRICE. Largest risk-decreasing features: NAME_INCOME_TYPE, CODE_GENDER, DAYS_REGISTRATION.",
+      "figure": "waterfall_172753.png",
+      "top_features": [
+        {
+          "feature": "EXT_SOURCE_3",
+          "raw_feature": "EXT_SOURCE_3",
+          "transformed_feature": "num__EXT_SOURCE_3",
+          "value": 0.09569272423026376,
+          "shap_value": 1.057966709136963,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "EXT_SOURCE_2",
+          "raw_feature": "EXT_SOURCE_2",
+          "transformed_feature": "num__EXT_SOURCE_2",
+          "value": 0.016060381673054624,
+          "shap_value": 0.9520095586776733,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "AMT_GOODS_PRICE",
+          "raw_feature": "AMT_GOODS_PRICE",
+          "transformed_feature": "num__AMT_GOODS_PRICE",
+          "value": 310500.0,
+          "shap_value": 0.2656058967113495,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "DAYS_BIRTH",
+          "raw_feature": "DAYS_BIRTH",
+          "transformed_feature": "num__DAYS_BIRTH",
+          "value": -13660.0,
+          "shap_value": 0.19418463110923767,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "REG_CITY_NOT_LIVE_CITY",
+          "raw_feature": "REG_CITY_NOT_LIVE_CITY",
+          "transformed_feature": "num__REG_CITY_NOT_LIVE_CITY",
+          "value": 1.0,
+          "shap_value": 0.15885856747627258,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "NAME_EDUCATION_TYPE=Lower secondary",
+          "raw_feature": "NAME_EDUCATION_TYPE",
+          "transformed_feature": "cat__NAME_EDUCATION_TYPE_Lower secondary",
+          "value": 1.0,
+          "shap_value": 0.13674813508987427,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "NAME_INCOME_TYPE=State servant",
+          "raw_feature": "NAME_INCOME_TYPE",
+          "transformed_feature": "cat__NAME_INCOME_TYPE_State servant",
+          "value": 1.0,
+          "shap_value": -0.11418133974075317,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "FLAG_WORK_PHONE",
+          "raw_feature": "FLAG_WORK_PHONE",
+          "transformed_feature": "num__FLAG_WORK_PHONE",
+          "value": 1.0,
+          "shap_value": 0.10878810286521912,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "AMT_INCOME_TOTAL",
+          "raw_feature": "AMT_INCOME_TOTAL",
+          "transformed_feature": "num__AMT_INCOME_TOTAL",
+          "value": 63000.0,
+          "shap_value": 0.09697463363409042,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "EXT_SOURCE_1 [missing]",
+          "raw_feature": "EXT_SOURCE_1",
+          "transformed_feature": "num__missingindicator_EXT_SOURCE_1",
+          "value": 1.0,
+          "shap_value": 0.08782307058572769,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "DAYS_EMPLOYED",
+          "raw_feature": "DAYS_EMPLOYED",
+          "transformed_feature": "num__DAYS_EMPLOYED",
+          "value": -606.0,
+          "shap_value": 0.07914529740810394,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "DAYS_ID_PUBLISH",
+          "raw_feature": "DAYS_ID_PUBLISH",
+          "transformed_feature": "num__DAYS_ID_PUBLISH",
+          "value": -408.0,
+          "shap_value": 0.07471232861280441,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "NAME_EDUCATION_TYPE=Secondary / secondary special",
+          "raw_feature": "NAME_EDUCATION_TYPE",
+          "transformed_feature": "cat__NAME_EDUCATION_TYPE_Secondary / secondary special",
+          "value": 0.0,
+          "shap_value": -0.05768731236457825,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "DAYS_REGISTRATION",
+          "raw_feature": "DAYS_REGISTRATION",
+          "transformed_feature": "num__DAYS_REGISTRATION",
+          "value": -7142.0,
+          "shap_value": -0.056865692138671875,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "AMT_CREDIT",
+          "raw_feature": "AMT_CREDIT",
+          "transformed_feature": "num__AMT_CREDIT",
+          "value": 310500.0,
+          "shap_value": -0.047506336122751236,
+          "effect": "decreases_risk"
+        }
+      ]
+    },
+    {
+      "application_id": 339432,
+      "y_true": 0,
+      "probability": 0.00021285100956447423,
+      "base_probability": 0.5282766402556108,
+      "summary": "Largest risk-increasing features: AMT_CREDIT, NONLIVINGAREA_AVG, WALLSMATERIAL_MODE. Largest risk-decreasing features: EXT_SOURCE_2, NAME_CONTRACT_TYPE, EXT_SOURCE_3.",
+      "figure": "waterfall_339432.png",
+      "top_features": [
+        {
+          "feature": "EXT_SOURCE_2",
+          "raw_feature": "EXT_SOURCE_2",
+          "transformed_feature": "num__EXT_SOURCE_2",
+          "value": 0.7769101180070849,
+          "shap_value": -1.2114287614822388,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "EXT_SOURCE_3",
+          "raw_feature": "EXT_SOURCE_3",
+          "transformed_feature": "num__EXT_SOURCE_3",
+          "value": 0.7281412993111438,
+          "shap_value": -0.8505720496177673,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "NAME_CONTRACT_TYPE=Cash loans",
+          "raw_feature": "NAME_CONTRACT_TYPE",
+          "transformed_feature": "cat__NAME_CONTRACT_TYPE_Cash loans",
+          "value": 0.0,
+          "shap_value": -0.7135030627250671,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "DAYS_EMPLOYED",
+          "raw_feature": "DAYS_EMPLOYED",
+          "transformed_feature": "num__DAYS_EMPLOYED",
+          "value": -7029.0,
+          "shap_value": -0.6230534315109253,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "AMT_ANNUITY",
+          "raw_feature": "AMT_ANNUITY",
+          "transformed_feature": "num__AMT_ANNUITY",
+          "value": 67500.0,
+          "shap_value": -0.5872267484664917,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "AMT_GOODS_PRICE",
+          "raw_feature": "AMT_GOODS_PRICE",
+          "transformed_feature": "num__AMT_GOODS_PRICE",
+          "value": 1350000.0,
+          "shap_value": -0.5483688712120056,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "AMT_INCOME_TOTAL",
+          "raw_feature": "AMT_INCOME_TOTAL",
+          "transformed_feature": "num__AMT_INCOME_TOTAL",
+          "value": 855000.0,
+          "shap_value": -0.3588564991950989,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "DAYS_ID_PUBLISH",
+          "raw_feature": "DAYS_ID_PUBLISH",
+          "transformed_feature": "num__DAYS_ID_PUBLISH",
+          "value": -4538.0,
+          "shap_value": -0.3399088680744171,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "AMT_CREDIT",
+          "raw_feature": "AMT_CREDIT",
+          "transformed_feature": "num__AMT_CREDIT",
+          "value": 1350000.0,
+          "shap_value": 0.3361209034919739,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "LANDAREA_MEDI",
+          "raw_feature": "LANDAREA_MEDI",
+          "transformed_feature": "num__LANDAREA_MEDI",
+          "value": 0.4017,
+          "shap_value": -0.23248453438282013,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "NAME_CONTRACT_TYPE=Revolving loans",
+          "raw_feature": "NAME_CONTRACT_TYPE",
+          "transformed_feature": "cat__NAME_CONTRACT_TYPE_Revolving loans",
+          "value": 1.0,
+          "shap_value": -0.2153157740831375,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "OWN_CAR_AGE",
+          "raw_feature": "OWN_CAR_AGE",
+          "transformed_feature": "num__OWN_CAR_AGE",
+          "value": 4.0,
+          "shap_value": -0.19908040761947632,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "NONLIVINGAPARTMENTS_AVG",
+          "raw_feature": "NONLIVINGAPARTMENTS_AVG",
+          "transformed_feature": "num__NONLIVINGAPARTMENTS_AVG",
+          "value": 0.1467,
+          "shap_value": -0.19600264728069305,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "NAME_EDUCATION_TYPE=Higher education",
+          "raw_feature": "NAME_EDUCATION_TYPE",
+          "transformed_feature": "cat__NAME_EDUCATION_TYPE_Higher education",
+          "value": 1.0,
+          "shap_value": -0.18703068792819977,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "DAYS_LAST_PHONE_CHANGE",
+          "raw_feature": "DAYS_LAST_PHONE_CHANGE",
+          "transformed_feature": "num__DAYS_LAST_PHONE_CHANGE",
+          "value": -168.0,
+          "shap_value": -0.18550467491149902,
+          "effect": "decreases_risk"
+        }
+      ]
+    },
+    {
+      "application_id": 120321,
+      "y_true": 0,
+      "probability": 0.4915030896663666,
+      "base_probability": 0.5282766402556108,
+      "summary": "Largest risk-increasing features: AMT_GOODS_PRICE, EXT_SOURCE_2, DAYS_EMPLOYED. Largest risk-decreasing features: EXT_SOURCE_1, DAYS_ID_PUBLISH, AMT_CREDIT.",
+      "figure": "waterfall_120321.png",
+      "top_features": [
+        {
+          "feature": "EXT_SOURCE_1",
+          "raw_feature": "EXT_SOURCE_1",
+          "transformed_feature": "num__EXT_SOURCE_1",
+          "value": 0.5592636702526825,
+          "shap_value": -0.31977853178977966,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "DAYS_ID_PUBLISH",
+          "raw_feature": "DAYS_ID_PUBLISH",
+          "transformed_feature": "num__DAYS_ID_PUBLISH",
+          "value": -5092.0,
+          "shap_value": -0.31420978903770447,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "AMT_GOODS_PRICE",
+          "raw_feature": "AMT_GOODS_PRICE",
+          "transformed_feature": "num__AMT_GOODS_PRICE",
+          "value": 225000.0,
+          "shap_value": 0.27504149079322815,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "EXT_SOURCE_2",
+          "raw_feature": "EXT_SOURCE_2",
+          "transformed_feature": "num__EXT_SOURCE_2",
+          "value": 0.2868765974777465,
+          "shap_value": 0.23636585474014282,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "AMT_CREDIT",
+          "raw_feature": "AMT_CREDIT",
+          "transformed_feature": "num__AMT_CREDIT",
+          "value": 269550.0,
+          "shap_value": -0.21280084550380707,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "HOUR_APPR_PROCESS_START",
+          "raw_feature": "HOUR_APPR_PROCESS_START",
+          "transformed_feature": "num__HOUR_APPR_PROCESS_START",
+          "value": 17.0,
+          "shap_value": -0.1582222878932953,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "DAYS_EMPLOYED",
+          "raw_feature": "DAYS_EMPLOYED",
+          "transformed_feature": "num__DAYS_EMPLOYED",
+          "value": -421.0,
+          "shap_value": 0.15001478791236877,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "DAYS_BIRTH",
+          "raw_feature": "DAYS_BIRTH",
+          "transformed_feature": "num__DAYS_BIRTH",
+          "value": -13728.0,
+          "shap_value": 0.14817391335964203,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "AMT_ANNUITY",
+          "raw_feature": "AMT_ANNUITY",
+          "transformed_feature": "num__AMT_ANNUITY",
+          "value": 16416.0,
+          "shap_value": -0.12205105274915695,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "REG_CITY_NOT_LIVE_CITY",
+          "raw_feature": "REG_CITY_NOT_LIVE_CITY",
+          "transformed_feature": "num__REG_CITY_NOT_LIVE_CITY",
+          "value": 1.0,
+          "shap_value": 0.11557824164628983,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "REGION_RATING_CLIENT_W_CITY",
+          "raw_feature": "REGION_RATING_CLIENT_W_CITY",
+          "transformed_feature": "num__REGION_RATING_CLIENT_W_CITY",
+          "value": 3.0,
+          "shap_value": 0.10843232274055481,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "EXT_SOURCE_1 [missing]",
+          "raw_feature": "EXT_SOURCE_1",
+          "transformed_feature": "num__missingindicator_EXT_SOURCE_1",
+          "value": 0.0,
+          "shap_value": -0.1031748577952385,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "CODE_GENDER=F",
+          "raw_feature": "CODE_GENDER",
+          "transformed_feature": "cat__CODE_GENDER_F",
+          "value": 1.0,
+          "shap_value": -0.08237914741039276,
+          "effect": "decreases_risk"
+        },
+        {
+          "feature": "DAYS_LAST_PHONE_CHANGE",
+          "raw_feature": "DAYS_LAST_PHONE_CHANGE",
+          "transformed_feature": "num__DAYS_LAST_PHONE_CHANGE",
+          "value": -217.0,
+          "shap_value": 0.06638629734516144,
+          "effect": "increases_risk"
+        },
+        {
+          "feature": "WEEKDAY_APPR_PROCESS_START=SATURDAY",
+          "raw_feature": "WEEKDAY_APPR_PROCESS_START",
+          "transformed_feature": "cat__WEEKDAY_APPR_PROCESS_START_SATURDAY",
+          "value": 1.0,
+          "shap_value": -0.06425271928310394,
+          "effect": "decreases_risk"
+        }
+      ]
+    }
+  ],
+  "artifacts": {
+    "global_importance": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\models\\local_v2\\global_importance.json",
+    "top_contributions_csv": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\top_contributions.csv",
+    "figures": [
+      "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\bar_top20.png",
+      "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\beeswarm_top20.png",
+      "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\waterfall_172753.png",
+      "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\waterfall_339432.png",
+      "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\waterfall_120321.png"
+    ],
+    "index_html": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\index.html",
+    "files": [
+      {
+        "path": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\models\\local_v2\\global_importance.json",
+        "sha256": "f625cdc5ec0272120594dd6b567f9c9b258f02b7aa56a41836130eaa74428ac0",
+        "bytes": 15306
+      },
+      {
+        "path": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\top_contributions.csv",
+        "sha256": "c975e269f8e71a76508fb811e25be5aedb3519a6e6f8bba1e82b5062c3130740",
+        "bytes": 6265255
+      },
+      {
+        "path": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\bar_top20.png",
+        "sha256": "be66860aa535d1ee34dc47d3e5b2ece780dc98e0a341d87bdbc6db40e0b0dbb8",
+        "bytes": 94792
+      },
+      {
+        "path": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\beeswarm_top20.png",
+        "sha256": "72da1415596ad911c06d78c58db3c3981df182623429045a079f9086319d8c83",
+        "bytes": 494481
+      },
+      {
+        "path": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\waterfall_172753.png",
+        "sha256": "64ec236d07de18532fc7e6fb0288ef18b1f37755112969056cc1aed3cddd9f04",
+        "bytes": 94155
+      },
+      {
+        "path": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\waterfall_339432.png",
+        "sha256": "f603e85df11543daa733dc13805a6731140ab5fcf65b1b4d6b88e175c943eed3",
+        "bytes": 93004
+      },
+      {
+        "path": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\waterfall_120321.png",
+        "sha256": "6b7c5547044c345278c94afc666fd1ca724e84ef60f80d25f777f2c72793f4b7",
+        "bytes": 92864
+      },
+      {
+        "path": "C:\\Users\\SINORFI\\Desktop\\CreditRisk\\docs\\figures\\shap\\index.html",
+        "sha256": "9e6ae50f80944a8ad0db53442ac198b1d225e3631a1c5b15e9b29315b890bb22",
+        "bytes": 3494
+      }
+    ]
+  }
+}
