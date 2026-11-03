@@ -13,6 +13,7 @@ if str(SRC_DIR) not in sys.path:
 from dashboard.pages.application_explorer import render_application_explorer
 from dashboard.pages.model_comparison import render_model_comparison
 from dashboard.pages.overview import render_overview
+from dashboard import data_access
 from dashboard.components.theme import inject_styles
 
 
@@ -27,10 +28,15 @@ def main() -> None:
     inject_styles()
 
     st.sidebar.markdown("## CREDIT RISK INTELLIGENCE")
-    st.sidebar.markdown("### Development mode")
-    st.sidebar.info(
-        "Mock data only. No live AWS, Kafka, trained models, or LLM integrations are connected."
-    )
+    if data_access.is_mock_mode():
+        st.sidebar.markdown("### Development mode")
+        st.sidebar.info(
+            "Mock data only. No live AWS, Kafka, trained models, or LLM integrations are connected."
+        )
+    else:
+        provider_name = data_access.get_provider_name() or "not configured"
+        st.sidebar.markdown(f"### Data provider: {provider_name}")
+        st.sidebar.warning("The selected data provider is not currently available.")
 
     st.markdown(
         """

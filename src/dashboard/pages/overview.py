@@ -25,37 +25,19 @@ _NUMERIC_COLUMNS = ("AMT_CREDIT", "AMT_INCOME_TOTAL", "AMT_ANNUITY")
 
 
 def _target_values(applications: pd.DataFrame) -> pd.Series | None:
-    """Return recognized binary target values, or None when no usable target exists."""
-    if "TARGET" not in applications.columns:
-        return None
-
-    target = pd.to_numeric(applications["TARGET"], errors="coerce")
-    target = target.where(target.isin([0, 1])).dropna()
-    return target if not target.empty else None
+    """Compatibility wrapper for the shared target-value calculation."""
+    return data_access.get_valid_target_values(applications)
 
 
 def _summarize_applications(applications: pd.DataFrame) -> dict[str, Any]:
-    """Calculate application and target statistics from the supplied data."""
-    target = _target_values(applications)
-    if target is None:
-        return {
-            "total": len(applications),
-            "target_0": None,
-            "target_1": None,
-            "difficulty_rate": None,
-            "unlabeled": len(applications),
-        }
-
-    target_0 = int(target.eq(0).sum())
-    target_1 = int(target.eq(1).sum())
-    labeled_count = target_0 + target_1
-
+    """Compatibility wrapper for the shared overview-metric calculation."""
+    metrics = data_access.get_overview_metrics(applications)
     return {
-        "total": len(applications),
-        "target_0": target_0,
-        "target_1": target_1,
-        "difficulty_rate": target_1 / labeled_count if labeled_count else None,
-        "unlabeled": len(applications) - labeled_count,
+        "total": metrics["total_applications"],
+        "target_0": metrics["target_0"],
+        "target_1": metrics["target_1"],
+        "difficulty_rate": metrics["difficulty_rate"],
+        "unlabeled": metrics["unlabeled"],
     }
 
 
@@ -247,13 +229,10 @@ def _render_numeric_distribution(applications: pd.DataFrame, column: str) -> Non
 
 def render_overview() -> None:
     """Render dynamic application and repayment-difficulty statistics."""
-    applications = data_access.get_applications()
-    is_mock = data_access.MOCK_MODE
-
     st.title("Overview")
     st.caption("Application portfolio and repayment-difficulty statistics from the configured data source.")
 
-    if is_mock:
+    if data_access.is_mock_mode():
         st.warning(
             "**DEMO DATA — Synthetic applications.** All figures on this page are illustrative and do not "
             "represent actual Home Credit applicants or model results."
@@ -264,7 +243,13 @@ def render_overview() -> None:
             "verify source provenance before interpreting them as real-world results."
         )
 
-    summary = _summarize_applications(applications)
+    try:
+        applications = data_access.get_applications()
+        summary = _summarize_applications(applications)
+    except data_access.DataAccessError as error:
+        st.error(f"Application data is unavailable: {error}")
+        return
+
     target_available = summary["target_0"] is not None
     metric_columns = st.columns(4, gap="large")
     with metric_columns[0]:
@@ -295,7 +280,8 @@ def render_overview() -> None:
 
     if summary["unlabeled"]:
         st.caption(
-            f"TARGET is missing or invalid for {summary['unlabeled']:,} of {summary['total']:,} applications; "
+            f"TARGET is missing or invalid for {summary['unlabeled']:,} of "
+            f"{summary['total']:,} applications; "
             "target percentages use only records with TARGET = 0 or TARGET = 1."
         )
 
