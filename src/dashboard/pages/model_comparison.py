@@ -1,110 +1,23 @@
 from __future__ import annotations
 
-import math
-import re
-from collections import Counter
-
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from dashboard import data_access
 from dashboard.components.theme import BLUE, TEAL, style_chart
 from dashboard.data_access import get_model_evaluation_results
 
-MODELS = ("XGBoost", "LSTM")
-METRICS = ("ROC-AUC", "PR-AUC", "Precision", "Recall", "F1-score")
-_MODEL_IDS = {
-    "xgboost": "XGBoost",
-    "lstm": "LSTM",
-}
-_METRIC_IDS = {
-    "rocauc": "ROC-AUC",
-    "prauc": "PR-AUC",
-    "precision": "Precision",
-    "recall": "Recall",
-    "f1score": "F1-score",
-}
+MODELS = data_access.MODEL_NAMES
+METRICS = data_access.MODEL_METRICS
 _MODEL_COLORS = {"XGBoost": BLUE, "LSTM": TEAL}
-
-
-def _identifier(value: object) -> str:
-    """Normalize external model and metric IDs for matching."""
-    return re.sub(r"[^a-z0-9]", "", str(value).strip().lower())
 
 
 def _normalize_results(
     results: pd.DataFrame | None,
 ) -> tuple[dict[str, dict[str, float | None]], dict[str, str], list[str]]:
-    """Validate canonical evaluation rows and report availability by model."""
-    values = {model: {metric: None for metric in METRICS} for model in MODELS}
-    supplied_models: set[str] = set()
-    issues: list[str] = []
-
-    if results is None or results.empty:
-        return values, {model: "Not available" for model in MODELS}, issues
-
-    required_columns = {"model", "metric", "value"}
-    missing_columns = required_columns.difference(results.columns)
-    if missing_columns:
-        issues.append(
-            "Evaluation results are missing required columns: "
-            + ", ".join(sorted(missing_columns))
-            + ". Expected model, metric, and value."
-        )
-        return values, {model: "Invalid results" for model in MODELS}, issues
-
-    occurrences: Counter[tuple[str, str]] = Counter()
-    parsed_values: dict[tuple[str, str], float | None] = {}
-
-    for row in results.loc[:, ["model", "metric", "value"]].itertuples(index=False):
-        model = _MODEL_IDS.get(_identifier(row.model))
-        if model is None:
-            issues.append(f"Unrecognized model identifier: {row.model!r}.")
-            continue
-
-        supplied_models.add(model)
-        metric = _METRIC_IDS.get(_identifier(row.metric))
-        if metric is None:
-            issues.append(f"Unrecognized metric identifier for {model}: {row.metric!r}.")
-            continue
-
-        key = (model, metric)
-        occurrences[key] += 1
-        try:
-            numeric_value = float(row.value)
-        except (TypeError, ValueError):
-            numeric_value = math.nan
-
-        parsed_values[key] = (
-            numeric_value
-            if math.isfinite(numeric_value) and 0.0 <= numeric_value <= 1.0
-            else None
-        )
-
-    for (model, metric), count in occurrences.items():
-        if count > 1:
-            parsed_values[(model, metric)] = None
-            issues.append(f"Duplicate evaluation rows for {model} / {metric}; value marked N/A.")
-        elif parsed_values[(model, metric)] is None:
-            issues.append(
-                f"Invalid or missing value for {model} / {metric}; expected a finite score from 0 to 1."
-            )
-        else:
-            values[model][metric] = parsed_values[(model, metric)]
-
-    statuses: dict[str, str] = {}
-    for model in MODELS:
-        available_count = sum(value is not None for value in values[model].values())
-        if model not in supplied_models:
-            statuses[model] = "Not available"
-        elif available_count == len(METRICS):
-            statuses[model] = "Available"
-        elif available_count:
-            statuses[model] = f"Partially available ({available_count}/{len(METRICS)} metrics)"
-        else:
-            statuses[model] = "Invalid or incomplete results"
-
-    return values, statuses, issues
+    """Compatibility wrapper for shared evaluation-result validation."""
+    return data_access.normalize_model_evaluation_results(results)
 
 
 def _metric_table(
@@ -169,9 +82,16 @@ def render_model_comparison() -> None:
     st.title("Model Comparison")
     st.caption("Compare evaluation metrics supplied by the model evaluation pipeline.")
 
-    raw_results = get_model_evaluation_results()
+    provider_error = None
+    try:
+        raw_results = get_model_evaluation_results()
+    except data_access.DataAccessError as error:
+        raw_results = None
+        provider_error = str(error)
     results = raw_results if isinstance(raw_results, pd.DataFrame) else None
     values, statuses, issues = _normalize_results(results)
+    if provider_error is not None:
+        issues.append(provider_error)
     valid_result_count = sum(
         value is not None
         for model_values in values.values()
@@ -185,6 +105,8 @@ def render_model_comparison() -> None:
             "**Evaluation results not yet available.** No evaluation output is configured. "
             "No model scores are being shown as actual results."
         )
+    if provider_error is not None:
+        st.error(f"Evaluation data is unavailable: {provider_error}")
 
     if issues:
         with st.expander("Data quality notes"):
