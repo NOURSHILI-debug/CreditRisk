@@ -214,6 +214,23 @@ pre-commit install
 pytest
 ```
 
+### 6. Run the API
+
+The FastAPI prediction service loads `models/local_v2/` and
+`data/raw/application_train.csv` at startup.
+
+PowerShell:
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn api.main:app --app-dir src --host 127.0.0.1 --port 8000
+```
+
+Check readiness at `http://127.0.0.1:8000/health`. See
+[`docs/api.md`](docs/api.md) for endpoints, environment variables and examples.
+
+> The API returns applicant-derived data. Run it on localhost only;
+> authentication is required before any real deployment.
+
 
 ## Project Deliverables
 
