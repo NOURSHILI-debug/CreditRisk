@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from project_paths import DEFAULT_MODEL_DIR, resolve_model_dir
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MODEL_DIR = "models/local_v2"
 DEFAULT_APPLICATION_DATA = "data/raw/application_train.csv"
 DEFAULT_CORS_ORIGINS = ("http://localhost:8501", "http://127.0.0.1:8501")
 DEFAULT_LOG_LEVEL = "INFO"
@@ -38,12 +39,12 @@ class Settings:
         cls, env: Mapping[str, str] | None = None
     ) -> "Settings":
         values = os.environ if env is None else env
-        model_dir = values.get("CREDIT_RISK_MODEL_DIR", DEFAULT_MODEL_DIR)
+        model_value = values.get("CREDIT_RISK_MODEL_DIR", str(DEFAULT_MODEL_DIR))
         data_path = values.get(
             "CREDIT_RISK_APPLICATION_DATA", DEFAULT_APPLICATION_DATA
         )
         return cls(
-            model_dir=_resolve_project_path(model_dir),
+            model_dir=resolve_model_dir(model_value),
             application_data_path=_resolve_project_path(data_path),
             cors_origins=_parse_cors_origins(
                 values.get("CREDIT_RISK_CORS_ORIGINS")
