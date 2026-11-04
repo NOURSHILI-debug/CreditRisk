@@ -41,9 +41,10 @@ from processing.preprocessing import (  # noqa: E402
     get_post_transform_feature_names,
     split_feature_columns,
 )
+from project_paths import DEFAULT_MODEL_DIR  # noqa: E402
 
 DATA_PATH = PROJECT_ROOT / "data" / "raw" / "application_train.csv"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "models" / "local_v2"
+DEFAULT_OUTPUT_DIR = DEFAULT_MODEL_DIR
 MODEL_NAME = "XGBoost"
 MODEL_VERSION = "baseline-v2-local"
 SEED = 42

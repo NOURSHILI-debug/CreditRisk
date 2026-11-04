@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 import sys
 import threading
 from dataclasses import dataclass
@@ -22,9 +21,10 @@ SRC_DIR = Path(__file__).resolve().parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from project_paths import DEFAULT_MODEL_DIR, resolve_model_dir  # noqa: E402
+
 ID_COLUMN = "SK_ID_CURR"
 TARGET_COLUMN = "TARGET"
-DEFAULT_MODEL_DIR = PROJECT_ROOT / "models" / "local_v2"
 DEFAULT_DATA_PATH = PROJECT_ROOT / "data" / "raw" / "application_train.csv"
 MISSING_INDICATOR_PREFIX = "num__missingindicator_"
 NUMERIC_PREFIX = "num__"
@@ -76,8 +76,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _default_model_dir() -> Path:
-    configured = os.getenv("CREDIT_RISK_MODEL_DIR")
-    return Path(configured) if configured else DEFAULT_MODEL_DIR
+    return resolve_model_dir()
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -137,9 +136,7 @@ def _row_values(matrix: Any, row_index: int) -> np.ndarray:
 
 class ShapExplainer:
     def __init__(self, model_dir: str | Path | None = None) -> None:
-        self.model_dir = (
-            Path(model_dir).resolve() if model_dir is not None else _default_model_dir()
-        )
+        self.model_dir = resolve_model_dir(model_dir)
         self.model_path = self.model_dir / "xgboost_baseline.json"
         self.preprocessor_path = self.model_dir / "preprocessor.pkl"
         self.features_path = self.model_dir / "feature_columns.json"
@@ -348,6 +345,7 @@ class ShapExplainer:
         transformed: Any,
         top_k: int = DEFAULT_TOP_K,
         application_id: int | None = None,
+        raw_application: pd.DataFrame | None = None,
     ) -> dict[str, Any]:
         shap_row = batch.shap_values[row_index]
         row_values = _row_values(transformed, row_index)
@@ -357,12 +355,27 @@ class ShapExplainer:
         for index in top_indices:
             value = float(row_values[index])
             shap_value = float(shap_row[index])
+            raw_feature = self.raw_feature_by_transformed[index]
+            raw_value: Any = None
+            if (
+                raw_application is not None
+                and len(raw_application) > row_index
+                and raw_feature in raw_application.columns
+            ):
+                raw_value = raw_application.iloc[row_index][raw_feature]
+                if pd.isna(raw_value):
+                    raw_value = None
+                elif isinstance(raw_value, np.generic):
+                    raw_value = raw_value.item()
+                if isinstance(raw_value, float) and not math.isfinite(raw_value):
+                    raw_value = None
             top_features.append(
                 {
                     "feature": self.display_names[index],
-                    "raw_feature": self.raw_feature_by_transformed[index],
+                    "raw_feature": raw_feature,
                     "transformed_feature": self.post_transform_features[index],
                     "value": value,
+                    "raw_value": raw_value,
                     "shap_value": shap_value,
                     "effect": (
                         "increases_risk"
@@ -383,6 +396,7 @@ class ShapExplainer:
             "base_value": base_value,
             "base_probability": float(1.0 / (1.0 + math.exp(-base_value))),
             "prediction_margin": float(batch.margins[row_index]),
+            "contribution_sum": float(shap_row.sum()),
             "probability": probability,
             "top_features": top_features,
             "summary": self.build_summary(raw_totals),
@@ -422,9 +436,7 @@ def _model_signature(model_path: Path) -> tuple[int, int]:
 
 
 def get_explainer(model_dir: str | Path | None = None) -> ShapExplainer:
-    resolved = (
-        Path(model_dir).resolve() if model_dir is not None else _default_model_dir()
-    )
+    resolved = resolve_model_dir(model_dir)
     model_path = resolved / "xgboost_baseline.json"
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
@@ -483,6 +495,7 @@ def explain_application(
         transformed=transformed,
         top_k=top_k,
         application_id=application_id,
+        raw_application=application,
     )
 
 

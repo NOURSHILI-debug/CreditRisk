@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 import sys
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -14,10 +13,11 @@ import joblib
 import pandas as pd
 from xgboost import XGBClassifier
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = Path(__file__).resolve().parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+
+from project_paths import resolve_model_dir  # noqa: E402
 
 ID_COLUMN = "SK_ID_CURR"
 TARGET_COLUMN = "TARGET"
@@ -39,8 +39,7 @@ class PredictionError(ValueError):
 
 
 def _default_model_dir() -> Path:
-    configured = os.getenv("CREDIT_RISK_MODEL_DIR")
-    return Path(configured) if configured else PROJECT_ROOT / "models"
+    return resolve_model_dir()
 
 
 def _utc_timestamp() -> str:
@@ -105,7 +104,7 @@ def _error_response(
 
 class CreditRiskPredictor:
     def __init__(self, model_dir: str | Path | None = None) -> None:
-        self.model_dir = Path(model_dir) if model_dir is not None else _default_model_dir()
+        self.model_dir = resolve_model_dir(model_dir)
         self.model_path = self.model_dir / "xgboost_baseline.json"
         self.preprocessor_path = self.model_dir / "preprocessor.pkl"
         self.features_path = self.model_dir / "feature_columns.json"
@@ -284,7 +283,7 @@ _PREDICTORS: dict[str, CreditRiskPredictor] = {}
 
 
 def _resolve_model_dir(model_dir: str | Path | None) -> Path:
-    return Path(model_dir) if model_dir is not None else _default_model_dir()
+    return resolve_model_dir(model_dir)
 
 
 def _get_predictor(model_dir: str | Path | None) -> CreditRiskPredictor:

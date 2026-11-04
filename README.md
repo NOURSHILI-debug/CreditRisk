@@ -54,7 +54,7 @@ The final platform will provide risk statistics, model comparisons, application-
                  (Where Feasible)
                          |
                          v
-                Prediction Interface
+                FastAPI Prediction API
                          |
                 +--------+--------+
                 |                 |
@@ -214,6 +214,39 @@ pre-commit install
 pytest
 ```
 
+### 6. Run the API
+
+The FastAPI prediction service loads `models/local_v2/` and
+`data/raw/application_train.csv` at startup.
+
+PowerShell:
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn api.main:app --app-dir src --host 127.0.0.1 --port 8000
+```
+
+Check readiness at `http://127.0.0.1:8000/health`.
+
+### 7. Run the real-data dashboard
+
+In a second PowerShell window, from the project root:
+
+```powershell
+$env:CREDIT_RISK_API_URL = "http://127.0.0.1:8000"
+.venv\Scripts\python.exe -m streamlit run src/dashboard/app.py --server.address 127.0.0.1 --server.port 8501
+```
+
+Open `http://127.0.0.1:8501`. Dashboard data comes from the FastAPI service;
+there is no synthetic-data fallback. Applicant browsing omits the sensitive
+`TARGET` column and is paginated. The Overview's prediction distributions are
+derived from the saved validation/test model-prediction artifacts, not from all
+applications in the source dataset.
+
+See [`docs/api.md`](docs/api.md) for endpoint details and environment variables.
+
+> The API returns applicant-derived data. Run it on localhost only;
+> authentication is required before any real deployment.
+
 
 ## Project Deliverables
 
@@ -238,6 +271,6 @@ pytest
 
 
 
-**Project Status:** Initial Development / Phase 0
+**Project Status:** Local FastAPI and real-data dashboard integration; AWS deployment and authentication are not implemented.
 
 **Domain:** Credit Risk Analytics · Machine Learning · Data Engineering · Cloud Computing · Generative AI

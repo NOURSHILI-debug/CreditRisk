@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -145,4 +146,21 @@ def test_missing_artifacts_return_unavailable_without_default_probability(
     assert result["status"] == "unavailable"
     assert result["probability"] is None
     assert result["risk_level"] is None
+    assert result["message"]
+
+
+def test_missing_preprocessor_returns_unavailable_without_exception(
+    model_dir: Path, sample_application: dict, tmp_path: Path
+) -> None:
+    shutil.copy2(
+        model_dir / "xgboost_baseline.json",
+        tmp_path / "xgboost_baseline.json",
+    )
+
+    with pytest.raises(FileNotFoundError):
+        CreditRiskPredictor(tmp_path)
+
+    result = predict_credit_risk(sample_application, model_dir=tmp_path)
+    assert result["status"] == "unavailable"
+    assert result["probability"] is None
     assert result["message"]

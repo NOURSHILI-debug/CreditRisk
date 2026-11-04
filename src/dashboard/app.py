@@ -28,15 +28,23 @@ def main() -> None:
     inject_styles()
 
     st.sidebar.markdown("## CREDIT RISK INTELLIGENCE")
-    if data_access.is_mock_mode():
-        st.sidebar.markdown("### Development mode")
-        st.sidebar.info(
-            "Mock data only. No live AWS, Kafka, trained models, or LLM integrations are connected."
-        )
+    st.sidebar.markdown("### Live FastAPI data")
+    try:
+        health = data_access.get_api_health()
+    except data_access.DataAccessError as error:
+        st.sidebar.error(f"API disconnected: {error}")
     else:
-        provider_name = data_access.get_provider_name() or "not configured"
-        st.sidebar.markdown(f"### Data provider: {provider_name}")
-        st.sidebar.warning("The selected data provider is not currently available.")
+        if health.get("status") == "ok":
+            st.sidebar.success(
+                f"API connected · {health.get('model_name') or 'model unavailable'} "
+                f"{health.get('model_version') or ''}"
+            )
+        else:
+            st.sidebar.warning(
+                "API connected but degraded: model or application data is unavailable."
+            )
+    if st.sidebar.button("Refresh live data"):
+        st.rerun()
 
     st.markdown(
         """
@@ -53,7 +61,7 @@ def main() -> None:
     )
     st.title("Credit Risk Intelligence Platform")
     st.caption(
-        "An interactive dashboard for application analysis, model comparison, and early-stage credit-risk intelligence."
+        "Applicant records, predictions, explanations, and evaluation results from the local FastAPI service."
     )
 
     try:

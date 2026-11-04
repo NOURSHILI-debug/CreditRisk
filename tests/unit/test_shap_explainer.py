@@ -64,6 +64,9 @@ def test_known_borderline_application_has_expected_explanation(
     assert result["base_probability"] == pytest.approx(
         0.5282766402556108, rel=1e-9, abs=1e-12
     )
+    assert result["contribution_sum"] == pytest.approx(
+        result["prediction_margin"] - result["base_value"], rel=0.0, abs=1e-6
+    )
     assert len(result["top_features"]) == 10
     assert result["summary"]
     assert "risk-increasing" in result["summary"] or "risk-decreasing" in result["summary"]
@@ -79,6 +82,19 @@ def test_known_borderline_application_has_expected_explanation(
         }
     assert "approve" not in result["summary"].lower()
     assert "reject" not in result["summary"].lower()
+
+
+def test_explain_transformed_row_returns_explanation(
+    model_dir: Path, sample_application: dict
+) -> None:
+    explainer = ShapExplainer(model_dir)
+    transformed = explainer.transform(pd.DataFrame([sample_application]))
+
+    result = explainer.explain_transformed_row(transformed)
+
+    assert result["method"] == "tree_shap"
+    assert result["top_features"]
+    assert all(feature["raw_value"] is None for feature in result["top_features"])
 
 
 def test_global_importance_aggregates_all_raw_features(

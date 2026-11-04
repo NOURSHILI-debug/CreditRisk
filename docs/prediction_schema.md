@@ -1,9 +1,16 @@
 # Dashboard prediction integration boundary
 
-The repository currently has no implemented prediction service, loaded-model
-adapter, or prediction result schema. The Application Explorer therefore shows
-prediction functionality as unavailable by default; it does not use the
-synthetic `RISK_PROBABILITY` field or derive a prediction from application data.
+A FastAPI prediction service is implemented in `src/api/` (see
+[`docs/api.md`](api.md)). It returns the probability of `TARGET=1` from the
+loaded XGBoost artifacts and can include SHAP explanations. The dashboard still
+uses its mock provider by default and does not consume the API yet; it never
+uses the synthetic `RISK_PROBABILITY` field or derives a prediction from
+application data.
+
+The API currently returns the legacy `status` value `"success"`. The canonical
+dashboard status mapping (`"available"` and related values) is defined in the
+API/dashboard contract step, after which an API-backed dashboard provider can
+pass API payloads through `normalize_prediction_response`.
 
 ## Provider response
 

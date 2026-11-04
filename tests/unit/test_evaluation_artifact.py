@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 
@@ -109,21 +110,13 @@ def test_baseline_comparison_is_context_only(evaluation_results: dict) -> None:
 
 
 def test_dashboard_normalizer_contract_is_available() -> None:
-    try:
-        from dashboard.data_access import normalize_model_evaluation_results
-    except (ImportError, AttributeError):
-        pytest.skip(
-            "Person 2 has not implemented "
-            "normalize_model_evaluation_results yet; contract handoff pending."
-        )
+    from dashboard.data_access import normalize_model_evaluation_results
 
-    evaluation_results = __import__("json").loads(
-        (
-            Path(__file__).resolve().parents[2]
-            / "models"
-            / "local_v2"
-            / "evaluation_results.json"
-        ).read_text(encoding="utf-8")
+    results = pd.DataFrame(
+        [{"model": "XGBoost", "metric": "ROC-AUC", "value": 0.75}]
     )
-    normalized = normalize_model_evaluation_results(evaluation_results)
-    assert normalized is not None
+    values, statuses, issues = normalize_model_evaluation_results(results)
+    assert values["XGBoost"]["ROC-AUC"] == 0.75
+    assert statuses["XGBoost"].startswith("Partially available")
+    assert statuses["LSTM"] == "Not available"
+    assert issues == []

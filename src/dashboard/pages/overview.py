@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -11,315 +10,174 @@ from dashboard import data_access
 from dashboard.components.metrics import render_metric
 from dashboard.components.theme import BLUE, RED, TEAL, style_chart
 
-_TARGET_LABELS = {
-    0: "No defined repayment difficulty (0)",
-    1: "Repayment difficulty (1)",
-}
-_CATEGORY_COLUMNS = (
-    "NAME_INCOME_TYPE",
-    "NAME_CONTRACT_TYPE",
-    "NAME_EDUCATION_TYPE",
-    "OCCUPATION_TYPE",
-)
-_NUMERIC_COLUMNS = ("AMT_CREDIT", "AMT_INCOME_TOTAL", "AMT_ANNUITY")
+_RISK_COLORS = {"LOW": TEAL, "MEDIUM": BLUE, "HIGH": RED}
 
 
-def _target_values(applications: pd.DataFrame) -> pd.Series | None:
-    """Compatibility wrapper for the shared target-value calculation."""
-    return data_access.get_valid_target_values(applications)
-
-
-def _summarize_applications(applications: pd.DataFrame) -> dict[str, Any]:
-    """Compatibility wrapper for the shared overview-metric calculation."""
-    metrics = data_access.get_overview_metrics(applications)
-    return {
-        "total": metrics["total_applications"],
-        "target_0": metrics["target_0"],
-        "target_1": metrics["target_1"],
-        "difficulty_rate": metrics["difficulty_rate"],
-        "unlabeled": metrics["unlabeled"],
-    }
-
-
-def _target_distribution(applications: pd.DataFrame) -> pd.DataFrame:
-    """Build count and percentage rows for the two defined target values."""
-    target = _target_values(applications)
-    if target is None:
-        return pd.DataFrame(columns=["Target", "Applications", "Share"])
-
-    counts = target.value_counts().reindex([0, 1], fill_value=0)
-    labeled_count = int(counts.sum())
-    return pd.DataFrame(
+def _render_risk_distribution(summary: dict[str, Any]) -> None:
+    distribution = summary.get("risk_distribution")
+    if not isinstance(distribution, dict) or not any(distribution.values()):
+        st.info("No saved prediction records are available for this split.")
+        return
+    chart_data = pd.DataFrame(
         [
-            {
-                "Target": _TARGET_LABELS[target_value],
-                "Applications": int(counts[target_value]),
-                "Share": float(counts[target_value] / labeled_count),
-            }
-            for target_value in (0, 1)
+            {"Risk category": category, "Predictions": count}
+            for category, count in distribution.items()
         ]
     )
-
-
-def _category_distribution(applications: pd.DataFrame, column: str) -> pd.DataFrame:
-    """Return category counts, retaining missing values as an explicit category."""
-    if column not in applications.columns or applications.empty:
-        return pd.DataFrame(columns=["Category", "Applications", "Share"])
-
-    categories = applications[column].astype("string").fillna("Missing")
-    counts = categories.value_counts(dropna=False)
-    result = counts.rename_axis("Category").reset_index(name="Applications")
-    result["Share"] = result["Applications"] / len(applications)
-
-    if len(result) > 10:
-        top_categories = result.nlargest(9, "Applications")
-        other_count = int(result.loc[~result["Category"].isin(top_categories["Category"]), "Applications"].sum())
-        result = top_categories.copy()
-        result.loc[len(result)] = {
-            "Category": "Other",
-            "Applications": other_count,
-            "Share": other_count / len(applications),
-        }
-
-    return result.sort_values("Applications", ascending=True)
-
-
-def _target_by_category(applications: pd.DataFrame, column: str) -> pd.DataFrame:
-    """Summarize target counts by a categorical application feature."""
-    target = _target_values(applications)
-    if target is None or column not in applications.columns:
-        return pd.DataFrame(columns=["Category", "TARGET", "Applications"])
-
-    data = pd.DataFrame(
-        {
-            "Category": applications[column].astype("string").fillna("Missing"),
-            "TARGET": pd.to_numeric(applications["TARGET"], errors="coerce"),
-        },
-        index=applications.index,
-    )
-    data = data.loc[data["TARGET"].isin([0, 1])]
-    if data.empty:
-        return pd.DataFrame(columns=["Category", "TARGET", "Applications"])
-
-    result = (
-        data.groupby(["Category", "TARGET"], observed=True)
-        .size()
-        .rename("Applications")
-        .reset_index()
-    )
-    result["TARGET"] = result["TARGET"].map(_TARGET_LABELS)
-    return result
-
-
-def _numeric_values(applications: pd.DataFrame, column: str) -> pd.Series:
-    """Return finite numeric values for a field, dropping invalid and missing data."""
-    if column not in applications.columns:
-        return pd.Series(dtype="float64")
-
-    values = pd.to_numeric(applications[column], errors="coerce")
-    return values.loc[np.isfinite(values)]
-
-
-def _render_target_distribution(applications: pd.DataFrame) -> None:
-    distribution = _target_distribution(applications)
-    if distribution.empty:
-        st.info("Target distribution is unavailable because no valid TARGET values are present.")
-        return
-
     fig = px.bar(
-        distribution,
-        x="Target",
-        y="Applications",
-        color="Target",
-        color_discrete_map={
-            _TARGET_LABELS[0]: TEAL,
-            _TARGET_LABELS[1]: RED,
-        },
-        custom_data=["Share"],
-        text=distribution.apply(
-            lambda row: f"{row['Applications']:,} · {row['Share']:.1%}",
-            axis=1,
-        ),
-        title="Target distribution",
+        chart_data,
+        x="Risk category",
+        y="Predictions",
+        color="Risk category",
+        color_discrete_map=_RISK_COLORS,
+        text="Predictions",
+        title=f"Risk distribution — {summary['prediction_split']} prediction records",
     )
-    fig.update_traces(
-        hovertemplate="%{x}<br>Applications: %{y:,}<br>Share: %{customdata[0]:.1%}<extra></extra>",
-        textposition="outside",
-        cliponaxis=False,
-    )
-    fig.update_layout(showlegend=False, xaxis_title=None, yaxis_title="Applications")
+    fig.update_layout(showlegend=False, yaxis_title="Saved model predictions")
     style_chart(fig, height=360)
     st.plotly_chart(fig, use_container_width=True)
 
 
-def _render_category_distribution(applications: pd.DataFrame, column: str) -> None:
-    distribution = _category_distribution(applications, column)
-    if distribution.empty:
-        st.info("No categorical application field is available for this distribution.")
+def _render_evaluation(results: pd.DataFrame) -> None:
+    if results.empty:
+        st.info("No evaluation metrics are available for this split.")
         return
-
-    fig = px.bar(
-        distribution,
-        x="Applications",
-        y="Category",
-        orientation="h",
-        color_discrete_sequence=[BLUE],
-        custom_data=["Share"],
-        text=distribution.apply(
-            lambda row: f"{row['Applications']:,} · {row['Share']:.1%}",
-            axis=1,
+    display = results.loc[:, ["model", "metric", "value"]].copy()
+    display["value"] = display["value"].map(
+        lambda value: f"{value:.1%}" if pd.notna(value) else "N/A"
+    )
+    st.dataframe(
+        display.rename(
+            columns={"model": "Model", "metric": "Metric", "value": "Score"}
         ),
-        title=f"Applications by {column.replace('NAME_', '').replace('_', ' ').title()}",
+        use_container_width=True,
+        hide_index=True,
     )
-    fig.update_traces(
-        hovertemplate="%{y}<br>Applications: %{x:,}<br>Share: %{customdata[0]:.1%}<extra></extra>",
-        textposition="outside",
-        cliponaxis=False,
-    )
-    fig.update_layout(xaxis_title="Applications", yaxis_title=None)
-    style_chart(fig, height=max(320, 52 * len(distribution)))
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def _render_target_by_category(applications: pd.DataFrame, column: str) -> None:
-    distribution = _target_by_category(applications, column)
-    if distribution.empty:
-        st.info("Target-by-category distribution is unavailable for the current data.")
-        return
-
-    fig = px.bar(
-        distribution,
-        x="Category",
-        y="Applications",
-        color="TARGET",
-        barmode="group",
-        color_discrete_map={
-            _TARGET_LABELS[0]: TEAL,
-            _TARGET_LABELS[1]: RED,
-        },
-        title=f"Repayment difficulty by {column.replace('NAME_', '').replace('_', ' ').title()}",
-    )
-    fig.update_layout(xaxis_title=None, yaxis_title="Applications", legend_title=None)
-    fig.update_traces(
-        hovertemplate="%{x}<br>%{fullData.name}<br>Applications: %{y:,}<extra></extra>"
-    )
-    style_chart(fig, height=380)
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def _render_numeric_distribution(applications: pd.DataFrame, column: str) -> None:
-    values = _numeric_values(applications, column)
-    if values.empty:
-        st.info(f"{column.replace('AMT_', '').replace('_', ' ').title()} distribution is unavailable.")
-        return
-
-    chart_data = pd.DataFrame({column: values})
-    fig = px.histogram(
-        chart_data,
-        x=column,
-        nbins=20,
-        color_discrete_sequence=[BLUE],
-        title=f"{column.replace('AMT_', '').replace('_', ' ').title()} distribution",
-    )
-    fig.update_layout(xaxis_title=column.replace("AMT_", "").replace("_", " ").title(), yaxis_title="Applications")
-    fig.update_traces(hovertemplate="Amount: %{x:$,.0f}<br>Applications: %{y}<extra></extra>")
-    style_chart(fig, height=380)
-    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_overview() -> None:
-    """Render dynamic application and repayment-difficulty statistics."""
     st.title("Overview")
-    st.caption("Application portfolio and repayment-difficulty statistics from the configured data source.")
-
-    if data_access.is_mock_mode():
-        st.warning(
-            "**DEMO DATA — Synthetic applications.** All figures on this page are illustrative and do not "
-            "represent actual Home Credit applicants or model results."
-        )
-    else:
-        st.info(
-            "**CONFIGURED DATA SOURCE.** Figures are calculated from the configured application provider; "
-            "verify source provenance before interpreting them as real-world results."
-        )
+    st.caption(
+        "Live portfolio size, saved model predictions, and evaluation results "
+        "provided by the local FastAPI service."
+    )
+    if st.button("Refresh live data"):
+        st.rerun()
 
     try:
-        applications = data_access.get_applications()
-        summary = _summarize_applications(applications)
+        with st.spinner("Loading data from the credit-risk API..."):
+            metrics = data_access.get_overview_metrics()
+            results = data_access.get_model_evaluation_results(
+                metrics["prediction_split"]
+            )
+            model = data_access.get_model_info()
     except data_access.DataAccessError as error:
-        st.error(f"Application data is unavailable: {error}")
+        st.error(f"Live data could not be retrieved from the API: {error}")
+        st.info(
+            "Start the FastAPI service on 127.0.0.1:8000 and refresh this page. "
+            "No sample data is shown while the API is unavailable."
+        )
         return
 
-    target_available = summary["target_0"] is not None
-    metric_columns = st.columns(4, gap="large")
-    with metric_columns[0]:
-        render_metric(
-            "Total applications",
-            f"{summary['total']:,}",
-            help_text="Number of application records returned by the configured data source.",
-        )
-    with metric_columns[1]:
-        render_metric(
-            "TARGET = 0",
-            f"{summary['target_0']:,}" if target_available else "N/A",
-            help_text="No defined repayment difficulties.",
-        )
-    with metric_columns[2]:
-        render_metric(
-            "TARGET = 1",
-            f"{summary['target_1']:,}" if target_available else "N/A",
-            help_text="Repayment difficulties.",
-        )
-    with metric_columns[3]:
-        rate = summary["difficulty_rate"]
-        render_metric(
-            "Repayment-difficulty rate",
-            f"{rate:.1%}" if rate is not None else "N/A",
-            help_text="TARGET = 1 divided by applications with a valid TARGET value.",
-        )
-
-    if summary["unlabeled"]:
-        st.caption(
-            f"TARGET is missing or invalid for {summary['unlabeled']:,} of "
-            f"{summary['total']:,} applications; "
-            "target percentages use only records with TARGET = 0 or TARGET = 1."
-        )
-
-    if applications.empty:
-        st.info("No applications are available from the configured data source.")
-        return
-
-    st.subheader("Application and target distributions")
-    target_column, category_column = st.columns(2, gap="large")
-    with target_column:
-        _render_target_distribution(applications)
-    with category_column:
-        categorical_field = next(
-            (column for column in _CATEGORY_COLUMNS if column in applications.columns),
-            None,
-        )
-        if categorical_field is None:
-            st.info("No supported categorical application field is available.")
-        else:
-            _render_category_distribution(applications, categorical_field)
-
-    st.subheader("Credit-risk patterns")
-    available_category = next(
-        (column for column in _CATEGORY_COLUMNS if column in applications.columns),
-        None,
+    summary = metrics
+    distribution = summary["risk_distribution"]
+    prediction_count = summary["prediction_count"]
+    columns = st.columns(4, gap="large")
+    metric_values = (
+        ("Applications in dataset", f"{metrics['total_applications']:,}"),
+        (f"{summary['prediction_split'].title()} predictions", f"{prediction_count:,}"),
+        ("Low-risk predictions", f"{distribution['LOW']:,}"),
+        ("High-risk predictions", f"{distribution['HIGH']:,}"),
     )
-    available_amount = next(
-        (column for column in _NUMERIC_COLUMNS if column in applications.columns),
-        None,
+    for column, (label, value) in zip(columns, metric_values):
+        with column:
+            render_metric(label, value)
+
+    bands = summary["risk_bands"]
+    st.caption(
+        f"Risk distribution uses actual saved {summary['prediction_split']} model output "
+        f"from `{summary['source']}`; it covers {prediction_count:,} scored "
+        "records, not every application in the source dataset. Risk bands are "
+        f"provisional model categories (LOW < {bands['low_upper']:.0%}, "
+        f"MEDIUM < {bands['medium_upper']:.0%}, HIGH otherwise), not lending decisions."
     )
-    risk_columns = st.columns(2, gap="large")
-    with risk_columns[0]:
-        if available_category is not None:
-            _render_target_by_category(applications, available_category)
-        else:
-            st.info("Target-by-category analysis is unavailable without a categorical application field.")
-    with risk_columns[1]:
-        if available_amount is not None:
-            _render_numeric_distribution(applications, available_amount)
-        else:
-            st.info("Credit amount distribution is unavailable because no supported numeric field is present.")
+
+    risk_column, outcomes_column = st.columns(2, gap="large")
+    with risk_column:
+        with st.container(border=True):
+            st.subheader("Risk distribution")
+            _render_risk_distribution(summary)
+    with outcomes_column:
+        with st.container(border=True):
+            st.subheader("Predicted outcome counts")
+            outcomes = summary["predicted_outcomes"]
+            outcome_data = pd.DataFrame(
+                [
+                    {
+                        "Model outcome": "No defined repayment difficulty",
+                        "Predictions": outcomes[
+                            "no_defined_repayment_difficulty"
+                        ],
+                    },
+                    {
+                        "Model outcome": "Repayment difficulty",
+                        "Predictions": outcomes["repayment_difficulty"],
+                    },
+                ]
+            )
+            st.dataframe(outcome_data, use_container_width=True, hide_index=True)
+            threshold = summary["decision_threshold"]
+            threshold_label = (
+                f"{threshold:.2f}" if threshold is not None else "unavailable"
+            )
+            st.caption(
+                f"Binary predictions use the saved model decision threshold "
+                f"({threshold_label}); these are model "
+                "classifications, not approval or rejection decisions."
+            )
+
+    st.subheader("Model evaluation")
+    st.caption(
+        f"Metrics are read from the backend evaluation artifact for the "
+        f"{results.attrs.get('split', summary['prediction_split'])} split."
+    )
+    _render_evaluation(results)
+
+    provenance = results.attrs.get("provenance", {})
+    confusion = results.attrs.get("confusion_matrix")
+    if isinstance(confusion, dict):
+        with st.expander("Confusion matrix"):
+            matrix = pd.DataFrame(
+                [
+                    {
+                        "Actual": "No defined repayment difficulty",
+                        "Predicted no difficulty": confusion.get("tn"),
+                        "Predicted repayment difficulty": confusion.get("fp"),
+                    },
+                    {
+                        "Actual": "Repayment difficulty",
+                        "Predicted no difficulty": confusion.get("fn"),
+                        "Predicted repayment difficulty": confusion.get("tp"),
+                    },
+                ]
+            )
+            st.dataframe(matrix, use_container_width=True, hide_index=True)
+            st.caption(
+                "Counts are from the saved evaluation confusion matrix at "
+                f"threshold {confusion.get('threshold', provenance.get('threshold', 'N/A'))}."
+            )
+
+    st.subheader("Model metadata")
+    thresholds = model.get("thresholds", {})
+    st.json(
+        {
+            "model_name": model.get("model_name"),
+            "model_version": model.get("model_version"),
+            "model_hash": model.get("model_hash"),
+            "training_date": model.get("training_date"),
+            "evaluation_split": results.attrs.get("split"),
+            "evaluation_generated_at": provenance.get("generated_at"),
+            "decision_threshold": thresholds.get("decision_threshold"),
+            "risk_bands": thresholds.get("risk_bands"),
+        }
+    )

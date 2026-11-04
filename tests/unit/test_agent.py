@@ -53,24 +53,23 @@ def test_application_details_returns_serializable_fields_and_nulls(
 
 
 @pytest.mark.parametrize(
-    ("application_id", "rows", "status"),
+    ("application_id", "status"),
     [
-        ("bad", [1001], "invalid_id"),
-        ("9999", [1001], "not_found"),
-        ("1002", [1002, 1002], "duplicate"),
-        ("1001", [], "unavailable"),
+        ("bad", "invalid_id"),
+        ("9999", "not_found"),
+        ("1002", "duplicate"),
+        ("1001", "unavailable"),
     ],
 )
 def test_application_details_preserves_lookup_statuses(
     monkeypatch: pytest.MonkeyPatch,
     application_id: str,
-    rows: list[int],
     status: str,
 ) -> None:
     monkeypatch.setattr(
         tools.data_access,
-        "get_applications",
-        lambda: pd.DataFrame({"SK_ID_CURR": rows}),
+        "get_application_by_id",
+        lambda _: data_access.ApplicationLookupResult(status=status),
     )
 
     result = tools.get_application_details(application_id)
@@ -104,30 +103,34 @@ def test_application_details_reports_unavailable_and_malformed_sources(
 def test_dashboard_metrics_returns_shared_values_and_handles_empty_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    metrics = {
+        "total_applications": 3,
+        "prediction_count": 3,
+        "prediction_split": "test",
+        "predicted_outcomes": {"0": 2, "1": 1},
+        "risk_distribution": {"LOW": 1, "MEDIUM": 1, "HIGH": 1},
+        "risk_bands": {"low_upper": 0.3, "medium_upper": 0.6},
+        "decision_threshold": 0.5,
+        "source": "test_predictions.csv",
+    }
     monkeypatch.setattr(
         tools.data_access,
-        "get_applications",
-        lambda: pd.DataFrame(
-            {"TARGET": [0, 1, None], "RISK_CATEGORY": ["Low", "High", "Low"]}
-        ),
+        "get_overview_metrics",
+        lambda: metrics,
     )
     result = tools.get_dashboard_metrics()
     assert result["status"] == "available"
-    assert result["metrics"] == {
-        "total_applications": 3,
-        "target_0": 1,
-        "target_1": 1,
-        "difficulty_rate": 0.5,
-        "unlabeled": 1,
-        "risk_distribution": {"Low": 2, "High": 1},
-    }
+    assert result["metrics"] == metrics
     _assert_json(result)
 
-    monkeypatch.setattr(tools.data_access, "get_applications", pd.DataFrame)
+    monkeypatch.setattr(
+        tools.data_access,
+        "get_overview_metrics",
+        lambda: {**metrics, "total_applications": 0},
+    )
     empty = tools.get_dashboard_metrics()
     assert empty["status"] == "unavailable"
     assert empty["metrics"]["total_applications"] == 0
-    assert empty["metrics"]["target_0"] is None
     _assert_json(empty)
 
 
@@ -143,10 +146,10 @@ def test_dashboard_metrics_reports_provider_errors(
     error: data_access.DataAccessError,
     status: str,
 ) -> None:
-    def fail() -> pd.DataFrame:
+    def fail() -> dict:
         raise error
 
-    monkeypatch.setattr(tools.data_access, "get_applications", fail)
+    monkeypatch.setattr(tools.data_access, "get_overview_metrics", fail)
     result = tools.get_dashboard_metrics()
     assert result["status"] == status
     assert result["metrics"] is None
@@ -180,7 +183,7 @@ def test_model_comparison_returns_available_complete_metrics(
     rows = pd.DataFrame(
         [
             {"model": model, "metric": metric, "value": index / 10}
-            for model in data_access.MODEL_NAMES
+            for model in ("XGBoost", "LSTM")
             for index, metric in enumerate(data_access.MODEL_METRICS, start=1)
         ]
     )
@@ -271,7 +274,7 @@ def test_prediction_preserves_task_9_contract_and_unavailable_status(
         "prediction_timestamp": "2026-11-03T10:00:00Z",
         "explanation": {"details": "provider supplied"},
         "message": None,
-        "source_mode": "mock",
+        "source_mode": "configured",
     }
     _assert_json(result)
 
