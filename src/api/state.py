@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from api.config import Settings
 from api.features import FeatureValidator
 from api.repository import ApplicationRepository
@@ -67,6 +69,8 @@ class ApplicationState:
     preprocessor_metadata: dict[str, Any] = field(default_factory=dict)
     evaluation_results: dict[str, Any] | None = None
     global_importance: dict[str, Any] | None = None
+    prediction_records: dict[str, pd.DataFrame] = field(default_factory=dict)
+    prediction_record_errors: dict[str, str] = field(default_factory=dict)
     model_error: str | None = None
     data_error: str | None = None
     explainer_error: str | None = None
@@ -204,6 +208,54 @@ def build_state(settings: Settings) -> ApplicationState:
     if evaluation is not None:
         evaluation = _without_local_paths(evaluation)
 
+    prediction_records: dict[str, pd.DataFrame] = {}
+    prediction_record_errors: dict[str, str] = {}
+    required_prediction_columns = {
+        "SK_ID_CURR",
+        "y_true",
+        "probability",
+        "prediction",
+    }
+    for split in ("validation", "test"):
+        prediction_path = settings.model_dir / f"{split}_predictions.csv"
+        if not prediction_path.exists():
+            prediction_record_errors[split] = (
+                f"{split.title()} prediction records are not available."
+            )
+            continue
+        try:
+            records = pd.read_csv(prediction_path)
+            missing = required_prediction_columns.difference(records.columns)
+            if missing:
+                raise ValueError(
+                    "Prediction artifact is missing columns: "
+                    + ", ".join(sorted(missing))
+                )
+            records = records.loc[:, sorted(required_prediction_columns)].copy()
+            records["y_true"] = pd.to_numeric(records["y_true"], errors="raise")
+            records["probability"] = pd.to_numeric(
+                records["probability"], errors="raise"
+            )
+            records["prediction"] = pd.to_numeric(
+                records["prediction"], errors="raise"
+            )
+            if (
+                not records["y_true"].isin([0, 1]).all()
+                or not records["prediction"].isin([0, 1]).all()
+                or not records["probability"].between(0, 1).all()
+            ):
+                raise ValueError(
+                    "Prediction artifact contains values outside the model contract."
+                )
+            prediction_records[split] = records
+        except (OSError, ValueError, pd.errors.ParserError) as exc:
+            prediction_record_errors[split] = (
+                f"Prediction artifact could not be loaded: {exc}"
+            )
+            LOGGER.warning(
+                "prediction_records_unavailable split=%s error=%s", split, exc
+            )
+
     predictor: CreditRiskPredictor | None = None
     model_error: str | None = None
     try:
@@ -269,6 +321,8 @@ def build_state(settings: Settings) -> ApplicationState:
         evaluation_missing=evaluation_missing,
         global_importance_error=importance_error,
         global_importance_missing=importance_missing,
+        prediction_records=prediction_records,
+        prediction_record_errors=prediction_record_errors,
     )
 
 

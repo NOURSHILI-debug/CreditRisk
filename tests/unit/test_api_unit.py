@@ -167,7 +167,7 @@ def test_health_and_model_metadata(tiny_client: TestClient) -> None:
 
     evaluation = tiny_client.get("/model/evaluation")
     assert evaluation.status_code == 200
-    assert evaluation.json()["threshold"] == 0.5
+    assert evaluation.json()["provenance"]["threshold"] == 0.5
 
     importance = tiny_client.get("/model/global-importance")
     assert importance.status_code == 200
@@ -178,7 +178,7 @@ def test_prediction_by_application_id_and_explanation(tiny_client: TestClient) -
     response = tiny_client.post("/predict", json={"application_id": 2})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "success"
+    assert payload["status"] == "available"
     assert payload["application_id"] == 2
     assert 0.0 <= payload["probability"] <= 1.0
     assert payload["risk_level"] in {"LOW", "MEDIUM", "HIGH"}
@@ -226,21 +226,21 @@ def test_prediction_by_features_and_unknown_category(
     response = tiny_client.post("/predict", json={"features": features})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "success"
+    assert payload["status"] == "available"
     assert payload["application_id"] is None
 
 
 def test_prediction_errors_are_explicit(tiny_client: TestClient) -> None:
     missing = tiny_client.get("/applications/999/prediction")
     assert missing.status_code == 404
-    assert missing.json()["status"] == "error"
+    assert missing.json()["status"] == "no_prediction"
     assert missing.json()["probability"] is None
 
     both = tiny_client.post(
         "/predict", json={"application_id": 1, "features": {"AMT_CREDIT": 1}}
     )
     assert both.status_code == 422
-    assert both.json()["status"] == "error"
+    assert both.json()["status"] == "invalid"
 
     neither = tiny_client.post("/predict", json={})
     assert neither.status_code == 422
@@ -312,7 +312,7 @@ def test_explicit_nulls_are_accepted_by_api(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "success"
+    assert payload["status"] == "available"
     assert 0.0 <= payload["probability"] <= 1.0
 
 
@@ -360,19 +360,10 @@ def test_cors_allows_only_configured_origins(tiny_client: TestClient) -> None:
     assert denied.headers.get("access-control-allow-origin") is None
 
 
-# The canonical status mapping is being defined in the API/dashboard contract
-# step. Keep this xfail until the API returns the dashboard's "available"
-# value instead of the legacy "success" value.
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known dashboard contract mismatch: dashboard normalizer accepts "
-        "'available'/None, not the API's required 'success' status."
-    ),
-)
-def test_dashboard_normalizer_accepts_api_success_status(
+def test_dashboard_normalizer_accepts_api_available_status(
     tiny_client: TestClient,
 ) -> None:
     payload = tiny_client.post("/predict", json={"application_id": 2}).json()
     normalized = normalize_prediction_response(payload)
     assert normalized.status == "available"
+    assert normalized.probability == payload["probability"]

@@ -95,8 +95,20 @@ def test_health_models_and_artifacts(api_client: TestClient) -> None:
     evaluation = api_client.get("/model/evaluation")
     assert evaluation.status_code == 200
     results = evaluation.json()
-    assert results["threshold"] == 0.5
-    assert "roc_auc" in results["metrics"]["test"]
+    assert results["split"] == "test"
+    assert results["provenance"]["threshold"] == 0.5
+    assert results["confusion_matrix"]["tn"] == 33397
+    assert results["confusion_matrix"]["tp"] == 2154
+    metrics = {row["metric"]: row["value"] for row in results["rows"]}
+    assert metrics["ROC-AUC"] == pytest.approx(0.7560700206065816)
+    assert set(metrics) == {
+        "ROC-AUC",
+        "PR-AUC",
+        "Precision",
+        "Recall",
+        "F1-score",
+    }
+    assert {row["model"] for row in results["rows"]} == {"XGBoost"}
 
     importance = api_client.get("/model/global-importance")
     assert importance.status_code == 200
@@ -109,11 +121,47 @@ def test_health_models_and_artifacts(api_client: TestClient) -> None:
     assert "source_predictions" not in importance_payload
 
 
+def test_prediction_summary_matches_real_test_prediction_records(
+    api_client: TestClient, model_dir: Path
+) -> None:
+    records = pd.read_csv(model_dir / "test_predictions.csv")
+    response = api_client.get("/model/prediction-summary", params={"split": "test"})
+    assert response.status_code == 200
+    summary = response.json()
+
+    assert summary["prediction_count"] == len(records)
+    assert summary["source"] == "test_predictions.csv"
+    assert summary["predicted_outcomes"] == {
+        "no_defined_repayment_difficulty": int(records["prediction"].eq(0).sum()),
+        "repayment_difficulty": int(records["prediction"].eq(1).sum()),
+    }
+    probabilities = records["probability"]
+    assert summary["risk_distribution"] == {
+        "LOW": int(probabilities.lt(0.30).sum()),
+        "MEDIUM": int((probabilities.ge(0.30) & probabilities.lt(0.60)).sum()),
+        "HIGH": int(probabilities.ge(0.60).sum()),
+    }
+
+
+def test_applicant_browsing_omits_target(api_client: TestClient) -> None:
+    listing = api_client.get(
+        "/applications", params={"fields": "SK_ID_CURR,AMT_CREDIT", "limit": 1}
+    )
+    detail = api_client.get("/applications/120321")
+    assert listing.status_code == 200
+    assert detail.status_code == 200
+    assert "TARGET" not in listing.json()["items"][0]
+    assert "TARGET" not in detail.json()["application"]
+    assert api_client.get(
+        "/applications/120321", params={"fields": "TARGET"}
+    ).status_code == 422
+
+
 def test_prediction_by_id_matches_artifact(api_client: TestClient) -> None:
     response = api_client.post("/predict", json={"application_id": 172753})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "success"
+    assert payload["status"] == "available"
     assert payload["application_id"] == 172753
     assert payload["probability"] == pytest.approx(
         0.9589290618896484, abs=1e-12
@@ -129,7 +177,7 @@ def test_prediction_by_features_matches_id_path(api_client: TestClient) -> None:
     response = api_client.post("/predict", json={"features": features})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "success"
+    assert payload["status"] == "available"
     assert payload["application_id"] is None
     assert payload["probability"] == pytest.approx(
         0.4915030896663666, abs=1e-12
@@ -220,7 +268,7 @@ def test_explanation_preserves_probability_and_additivity(
     )
     assert explained_response.status_code == 200
     explained = explained_response.json()
-    assert explained["status"] == "success"
+    assert explained["status"] == "available"
     assert explained["probability"] == plain["probability"]
     assert explained["probability"] == pytest.approx(
         0.00021285100956447423, abs=1e-12
@@ -242,7 +290,7 @@ def test_explanation_preserves_probability_and_additivity(
 def test_api_input_errors(api_client: TestClient) -> None:
     missing = api_client.get("/applications/999999999/prediction")
     assert missing.status_code == 404
-    assert missing.json()["status"] == "error"
+    assert missing.json()["status"] == "no_prediction"
     assert missing.json()["probability"] is None
 
     both = api_client.post(
@@ -250,8 +298,8 @@ def test_api_input_errors(api_client: TestClient) -> None:
         json={"application_id": 172753, "features": {"AMT_CREDIT": 100}},
     )
     assert both.status_code == 422
-    assert both.json()["status"] == "error"
+    assert both.json()["status"] == "invalid"
 
     neither = api_client.post("/predict", json={})
     assert neither.status_code == 422
-    assert neither.json()["status"] == "error"
+    assert neither.json()["status"] == "invalid"

@@ -122,8 +122,7 @@ def get_dashboard_metrics() -> dict[str, Any]:
     """Retrieve shared overview metrics for the configured application snapshot."""
     source_mode = _source_mode()
     try:
-        applications = data_access.get_applications()
-        metrics = data_access.get_overview_metrics(applications)
+        metrics = data_access.get_overview_metrics()
     except data_access.DataSourceUnavailableError as error:
         return {
             "status": "unavailable",
@@ -139,13 +138,17 @@ def get_dashboard_metrics() -> dict[str, Any]:
             "message": str(error),
         }
 
-    status = "available" if not applications.empty else "unavailable"
+    status = (
+        "available"
+        if metrics["total_applications"] > 0
+        else "unavailable"
+    )
     response = {
         "status": status,
         "metrics": _json_value(metrics),
         "source_mode": source_mode,
     }
-    if applications.empty:
+    if metrics["total_applications"] == 0:
         response["message"] = "No application records are available."
     return response
 

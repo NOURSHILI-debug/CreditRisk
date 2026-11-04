@@ -84,6 +84,19 @@ def test_known_borderline_application_has_expected_explanation(
     assert "reject" not in result["summary"].lower()
 
 
+def test_explain_transformed_row_returns_explanation(
+    model_dir: Path, sample_application: dict
+) -> None:
+    explainer = ShapExplainer(model_dir)
+    transformed = explainer.transform(pd.DataFrame([sample_application]))
+
+    result = explainer.explain_transformed_row(transformed)
+
+    assert result["method"] == "tree_shap"
+    assert result["top_features"]
+    assert all(feature["raw_value"] is None for feature in result["top_features"])
+
+
 def test_global_importance_aggregates_all_raw_features(
     model_dir: Path, sample_application: dict
 ) -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
@@ -52,6 +52,7 @@ class ApplicationRepository:
                 f"{duplicate_values}"
             )
 
+        frame = frame.sort_values(ID_COLUMN, kind="mergesort").reset_index(drop=True)
         self._numeric_bounds = self._compute_numeric_bounds(frame)
         self._frame = frame.set_index(ID_COLUMN, drop=False)
 
@@ -81,6 +82,12 @@ class ApplicationRepository:
     def numeric_bounds(self) -> dict[str, tuple[float, float]]:
         return dict(self._numeric_bounds)
 
+    @property
+    def columns(self) -> list[str]:
+        if self._frame is None:
+            return []
+        return [str(column) for column in self._frame.columns]
+
     def get_by_id(self, application_id: int) -> pd.Series | None:
         if self._frame is None:
             return None
@@ -93,6 +100,52 @@ class ApplicationRepository:
                 f"Multiple rows found for application {application_id}."
             )
         return row.drop(labels=[TARGET_COLUMN], errors="ignore").copy()
+
+    def get_full_by_id(self, application_id: int) -> pd.Series | None:
+        """Return the full source record, including TARGET, for display."""
+        if self._frame is None:
+            return None
+        try:
+            row = self._frame.loc[int(application_id)]
+        except KeyError:
+            return None
+        if isinstance(row, pd.DataFrame):
+            raise DuplicateApplicationIdError(
+                f"Multiple rows found for application {application_id}."
+            )
+        return row.copy()
+
+    def list_rows(
+        self,
+        fields: list[str],
+        limit: int,
+        offset: int,
+        *,
+        application_id: int | None = None,
+        filters: Mapping[str, str] | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return rows ordered by SK_ID_CURR, plus the total row count."""
+        if self._frame is None:
+            return [], 0
+        selected = self._frame
+        if application_id is not None:
+            selected = selected.loc[selected[ID_COLUMN].eq(application_id)]
+        for field, value in (filters or {}).items():
+            if field in selected.columns:
+                selected = selected.loc[
+                    selected[field].astype("string").eq(value).fillna(False)
+                ]
+        total = int(len(selected))
+        page = selected.iloc[offset : offset + limit]
+        rows: list[dict[str, Any]] = []
+        for _, row in page.iterrows():
+            rows.append(
+                {
+                    field: row[field] if field in row.index else None
+                    for field in fields
+                }
+            )
+        return rows, total
 
     def count(self) -> int:
         return 0 if self._frame is None else int(len(self._frame))

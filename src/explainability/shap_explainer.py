@@ -345,6 +345,7 @@ class ShapExplainer:
         transformed: Any,
         top_k: int = DEFAULT_TOP_K,
         application_id: int | None = None,
+        raw_application: pd.DataFrame | None = None,
     ) -> dict[str, Any]:
         shap_row = batch.shap_values[row_index]
         row_values = _row_values(transformed, row_index)
@@ -354,12 +355,27 @@ class ShapExplainer:
         for index in top_indices:
             value = float(row_values[index])
             shap_value = float(shap_row[index])
+            raw_feature = self.raw_feature_by_transformed[index]
+            raw_value: Any = None
+            if (
+                raw_application is not None
+                and len(raw_application) > row_index
+                and raw_feature in raw_application.columns
+            ):
+                raw_value = raw_application.iloc[row_index][raw_feature]
+                if pd.isna(raw_value):
+                    raw_value = None
+                elif isinstance(raw_value, np.generic):
+                    raw_value = raw_value.item()
+                if isinstance(raw_value, float) and not math.isfinite(raw_value):
+                    raw_value = None
             top_features.append(
                 {
                     "feature": self.display_names[index],
-                    "raw_feature": self.raw_feature_by_transformed[index],
+                    "raw_feature": raw_feature,
                     "transformed_feature": self.post_transform_features[index],
                     "value": value,
+                    "raw_value": raw_value,
                     "shap_value": shap_value,
                     "effect": (
                         "increases_risk"
@@ -479,6 +495,7 @@ def explain_application(
         transformed=transformed,
         top_k=top_k,
         application_id=application_id,
+        raw_application=application,
     )
 
 

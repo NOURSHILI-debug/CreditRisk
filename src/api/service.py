@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import logging
-import math
 from typing import Any, Mapping
 
 import pandas as pd
 
 from api.repository import ID_COLUMN
 from api.state import ApplicationState, utc_timestamp
-from api.status import SUCCESS_STATUS
+from api.status import status_for_probability
 from inference.predictor import PredictionError
 
 LOGGER = logging.getLogger("credit_risk_api")
@@ -18,28 +17,45 @@ class ApplicationNotFoundError(LookupError):
     """Raised when an application ID is not present in the source data."""
 
 
-class ServiceUnavailableError(RuntimeError):
-    """Raised when model or application data is unavailable."""
+class ModelUnavailableError(RuntimeError):
+    """Raised when model artifacts or preprocessing metadata are unavailable."""
+
+
+class DataUnavailableError(RuntimeError):
+    """Raised when the application data source is unavailable."""
 
 
 class InvalidPredictionInputError(ValueError):
     """Raised when incoming prediction input is outside the contract."""
 
 
+class InvalidModelOutputError(RuntimeError):
+    """Raised when the model returns a probability outside the contract."""
+
+
 class PredictionService:
     def __init__(self, state: ApplicationState) -> None:
         self.state = state
 
-    def _require_ready(self) -> None:
+    def _require_model(self) -> None:
         if self.state.predictor is None:
-            raise ServiceUnavailableError("Model artifacts are unavailable.")
+            raise ModelUnavailableError("Model artifacts are unavailable.")
+
+    def _require_data(self) -> None:
         if self.state.repository is None or not self.state.repository.available:
-            raise ServiceUnavailableError("Application data is unavailable.")
+            raise DataUnavailableError("Application data is unavailable.")
+
+    def _require_feature_validation(self) -> None:
+        if self.state.feature_validator is None:
+            raise ModelUnavailableError(
+                "Feature preprocessing metadata is unavailable."
+            )
 
     def predict_by_application_id(
         self, application_id: int, include_explanation: bool = False
     ) -> dict[str, Any]:
-        self._require_ready()
+        self._require_model()
+        self._require_data()
         assert self.state.repository is not None
         row = self.state.repository.get_by_id(application_id)
         if row is None:
@@ -52,11 +68,10 @@ class PredictionService:
     def predict_by_features(
         self, features: Mapping[str, Any], include_explanation: bool = False
     ) -> dict[str, Any]:
-        self._require_ready()
-        if self.state.feature_validator is None:
-            raise ServiceUnavailableError(
-                "Feature validation metadata is unavailable."
-            )
+        self._require_model()
+        self._require_data()
+        self._require_feature_validation()
+        assert self.state.feature_validator is not None
         try:
             frame = self.state.feature_validator.validate(features)
         except ValueError as exc:
@@ -80,9 +95,12 @@ class PredictionService:
             )
         except PredictionError as exc:
             raise InvalidPredictionInputError(str(exc)) from exc
-        status = str(result.get("status", "error"))
+
+        status = result.get("status")
+        if status == "no_prediction":
+            return self._no_prediction(application_id, result)
         if status == "unavailable":
-            raise ServiceUnavailableError(
+            raise ModelUnavailableError(
                 str(result.get("message", "Model artifacts are unavailable."))
             )
         if status != "success":
@@ -90,28 +108,28 @@ class PredictionService:
                 str(result.get("message", "Prediction input is invalid."))
             )
 
-        probability = result.get("probability")
-        if (
-            isinstance(probability, bool)
-            or not isinstance(probability, (int, float))
-            or not math.isfinite(float(probability))
-            or not 0.0 <= float(probability) <= 1.0
-        ):
-            raise RuntimeError("Predictor returned an invalid probability.")
+        probability_status = status_for_probability(result.get("probability"))
+        if probability_status == "no_prediction":
+            return self._no_prediction(application_id, result)
+        if probability_status == "invalid":
+            raise InvalidModelOutputError(
+                "The model returned an invalid probability."
+            )
+        probability = float(result["probability"])
 
         explanation = None
         message = str(result.get("message", "Prediction generated successfully."))
         if include_explanation:
             explanation, explanation_message = self._explain(
-                application, application_id, float(probability)
+                application, application_id, probability
             )
             if explanation_message:
                 message = explanation_message
 
         return {
-            "status": SUCCESS_STATUS,
+            "status": "available",
             "application_id": result.get("application_id", application_id),
-            "probability": float(probability),
+            "probability": probability,
             "risk_level": result.get("risk_level"),
             "model_name": result.get("model_name") or self.state.model_name,
             "model_version": result.get("model_version")
@@ -120,6 +138,30 @@ class PredictionService:
             or utc_timestamp(),
             "explanation": explanation,
             "message": message,
+        }
+
+    def _no_prediction(
+        self,
+        application_id: int | None,
+        result: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "status": "no_prediction",
+            "application_id": result.get("application_id", application_id),
+            "probability": None,
+            "risk_level": None,
+            "model_name": result.get("model_name") or self.state.model_name,
+            "model_version": result.get("model_version")
+            or self.state.model_version,
+            "prediction_timestamp": result.get("prediction_timestamp")
+            or utc_timestamp(),
+            "explanation": None,
+            "message": str(
+                result.get(
+                    "message",
+                    "No prediction is available for this application.",
+                )
+            ),
         }
 
     def _explain(
@@ -142,6 +184,7 @@ class PredictionService:
                 row_index=0,
                 transformed=transformed,
                 application_id=application_id,
+                raw_application=application,
             )
             if abs(float(explanation["probability"]) - probability) > 1e-12:
                 raise RuntimeError(

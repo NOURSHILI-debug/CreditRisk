@@ -13,8 +13,9 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.config import Settings
+from api.errors import error_payload
 from api.logging_config import REQUEST_ID, configure_logging
-from api.routers import health, models, predictions
+from api.routers import applications, health, models, predictions
 from api.state import ApplicationState, build_state, utc_timestamp
 from explainability.shap_explainer import clear_explainer_cache
 
@@ -30,21 +31,15 @@ def _request_id(value: str | None) -> str:
 def _error_payload(
     state: ApplicationState | None,
     message: str,
-    status: str = "error",
+    status: str = "invalid",
 ) -> dict:
-    if state is not None:
-        return state.prediction_error(status, message)
-    return {
-        "status": status,
-        "application_id": None,
-        "probability": None,
-        "risk_level": None,
-        "model_name": "XGBoost",
-        "model_version": "unknown",
-        "prediction_timestamp": utc_timestamp(),
-        "explanation": None,
-        "message": message,
-    }
+    return error_payload(
+        status,
+        message,
+        model_name=state.model_name if state is not None else None,
+        model_version=state.model_version if state is not None else None,
+        prediction_timestamp=utc_timestamp(),
+    )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -115,7 +110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state = getattr(request.app.state, "container", None)
         return JSONResponse(
             status_code=422,
-            content=_error_payload(state, "Invalid request."),
+            content=_error_payload(state, "Invalid request.", "invalid"),
         )
 
     @app.exception_handler(StarletteHTTPException)
@@ -123,9 +118,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request, exc: StarletteHTTPException
     ) -> JSONResponse:
         state = getattr(request.app.state, "container", None)
+        status = "model_unavailable" if exc.status_code == 503 else "invalid"
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": str(exc.detail)},
+            content=_error_payload(state, str(exc.detail), status),
         )
 
     @app.exception_handler(Exception)
@@ -144,11 +140,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state = getattr(request.app.state, "container", None)
         return JSONResponse(
             status_code=500,
-            content=_error_payload(state, "Internal server error."),
+            content=_error_payload(state, "Internal server error.", "invalid"),
         )
+
+    @app.get("/", tags=["service"])
+    def service_root() -> dict:
+        return {
+            "service": "Credit Risk Intelligence API",
+            "version": app.version,
+            "docs": "/docs",
+        }
 
     app.include_router(health.router)
     app.include_router(models.router)
+    app.include_router(applications.router)
     app.include_router(predictions.router)
     return app
 

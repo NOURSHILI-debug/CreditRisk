@@ -4,12 +4,15 @@ from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import JSONResponse
 
 from api.dependencies import get_state
-from api.schemas import PredictionResponse, PredictRequest
+from api.repository import DuplicateApplicationIdError
+from api.schemas import ErrorResponse, PredictionResponse, PredictRequest
 from api.service import (
     ApplicationNotFoundError,
+    DataUnavailableError,
+    InvalidModelOutputError,
     InvalidPredictionInputError,
+    ModelUnavailableError,
     PredictionService,
-    ServiceUnavailableError,
 )
 from api.state import ApplicationState
 
@@ -51,16 +54,30 @@ def _run(
             )
         return PredictionResponse.model_validate(result)
     except ApplicationNotFoundError as exc:
-        return _error(state, 404, "error", str(exc), application_id)
+        return _error(state, 404, "no_prediction", str(exc), application_id)
+    except ModelUnavailableError as exc:
+        return _error(state, 503, "model_unavailable", str(exc), application_id)
+    except DataUnavailableError as exc:
+        return _error(state, 503, "unavailable", str(exc), application_id)
+    except DuplicateApplicationIdError as exc:
+        return _error(state, 409, "invalid", str(exc), application_id)
     except InvalidPredictionInputError as exc:
-        return _error(state, 422, "error", str(exc), application_id)
-    except ServiceUnavailableError as exc:
-        return _error(
-            state, 503, "unavailable", str(exc), application_id
-        )
+        return _error(state, 422, "invalid", str(exc), application_id)
+    except InvalidModelOutputError as exc:
+        return _error(state, 500, "invalid", str(exc), application_id)
 
 
-@router.post("/predict", response_model=PredictionResponse)
+@router.post(
+    "/predict",
+    response_model=PredictionResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "Application not found."},
+        409: {"model": ErrorResponse, "description": "Duplicate application ID."},
+        422: {"model": ErrorResponse, "description": "Invalid input."},
+        500: {"model": ErrorResponse, "description": "Invalid model output."},
+        503: {"model": ErrorResponse, "description": "Model or data unavailable."},
+    },
+)
 def predict(
     payload: PredictRequest,
     include_explanation: bool = Query(default=False),
@@ -85,6 +102,13 @@ def predict(
 @router.get(
     "/applications/{application_id}/prediction",
     response_model=PredictionResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "Application not found."},
+        409: {"model": ErrorResponse, "description": "Duplicate application ID."},
+        422: {"model": ErrorResponse, "description": "Invalid input."},
+        500: {"model": ErrorResponse, "description": "Invalid model output."},
+        503: {"model": ErrorResponse, "description": "Model or data unavailable."},
+    },
 )
 def application_prediction(
     application_id: int = Path(gt=0),
