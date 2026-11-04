@@ -105,3 +105,4 @@ desktop.ini
 
 # Generated SHAP report data
 docs/figures/shap/top_contributions.csv
+docs/figures/shap/shap_metadata.json
