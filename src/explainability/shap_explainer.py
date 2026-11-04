@@ -383,6 +383,7 @@ class ShapExplainer:
             "base_value": base_value,
             "base_probability": float(1.0 / (1.0 + math.exp(-base_value))),
             "prediction_margin": float(batch.margins[row_index]),
+            "contribution_sum": float(shap_row.sum()),
             "probability": probability,
             "top_features": top_features,
             "summary": self.build_summary(raw_totals),
