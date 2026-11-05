@@ -253,76 +253,171 @@ def test_model_comparison_reports_malformed_results_and_unavailable_source(
 def test_prediction_preserves_task_9_contract_and_unavailable_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        tools.data_access,
-        "get_credit_risk_prediction",
-        lambda _: data_access.CreditRiskPrediction(
+    calls: list[tuple[int, bool]] = []
+
+    def prediction(
+        application_id: int, *, include_explanation: bool
+    ) -> data_access.CreditRiskPrediction:
+        calls.append((application_id, include_explanation))
+        return data_access.CreditRiskPrediction(
             status="available",
             probability=0.25,
+            risk_level="LOW",
             model_name="XGBoost",
             model_version="v2",
             prediction_timestamp="2026-11-03T10:00:00Z",
-            explanation={"details": "provider supplied"},
-        ),
-    )
-    result = tools.get_prediction("1001")
-    assert result == {
-        "status": "available",
-        "probability": 0.25,
-        "model_name": "XGBoost",
-        "model_version": "v2",
-        "prediction_timestamp": "2026-11-03T10:00:00Z",
-        "explanation": {"details": "provider supplied"},
-        "message": None,
-        "source_mode": "configured",
-    }
-    _assert_json(result)
+            explanation={"details": "must not reach the agent"},
+        )
 
     monkeypatch.setattr(
         tools.data_access,
         "get_credit_risk_prediction",
-        lambda _: data_access.CreditRiskPrediction(
+        prediction,
+    )
+    result = tools.get_prediction("1001")
+    assert result == {
+        "status": "available",
+        "application_id": 1001,
+        "probability": 0.25,
+        "risk_level": "LOW",
+        "model_name": "XGBoost",
+        "model_version": "v2",
+        "prediction_timestamp": "2026-11-03T10:00:00Z",
+        "message": None,
+        "source_mode": "configured",
+    }
+    assert calls == [(1001, False)]
+    assert "explanation" not in result
+    _assert_json(result)
+
+    def unavailable_prediction(
+        _application_id: int, *, include_explanation: bool
+    ) -> data_access.CreditRiskPrediction:
+        assert _application_id == 1001
+        assert include_explanation is False
+        return data_access.CreditRiskPrediction(
             status="unavailable", message="no prediction provider"
-        ),
+        )
+
+    monkeypatch.setattr(
+        tools.data_access,
+        "get_credit_risk_prediction",
+        unavailable_prediction,
     )
     unavailable = tools.get_prediction(1001)
     assert unavailable["status"] == "unavailable"
+    assert unavailable["application_id"] == 1001
     assert unavailable["probability"] is None
     assert unavailable["message"] == "no prediction provider"
     _assert_json(unavailable)
 
 
-def test_prediction_preserves_invalid_malformed_and_invalid_id_statuses(
+def test_prediction_preserves_missing_optional_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        tools.data_access,
-        "get_credit_risk_prediction",
-        lambda _: data_access.CreditRiskPrediction(
-            status="invalid", message="Malformed provider response."
-        ),
-    )
-    malformed = tools.get_prediction(1001)
-    assert malformed["status"] == "invalid"
-    assert malformed["message"] == "Malformed provider response."
-    _assert_json(malformed)
+    def missing_optional_metadata(
+        _application_id: int, *, include_explanation: bool
+    ) -> data_access.CreditRiskPrediction:
+        assert _application_id == 1001
+        assert include_explanation is False
+        return data_access.CreditRiskPrediction(
+            status="available", probability=0.0
+        )
 
     monkeypatch.setattr(
         tools.data_access,
         "get_credit_risk_prediction",
-        lambda _: data_access.CreditRiskPrediction(
-            status="invalid", message="A valid application ID is required."
-        ),
+        missing_optional_metadata,
     )
-    invalid_id = tools.get_prediction(True)
-    assert invalid_id["status"] == "invalid"
-    _assert_json(invalid_id)
+
+    result = tools.get_prediction(1001)
+
+    assert result["application_id"] == 1001
+    assert result["probability"] == 0.0
+    assert result["risk_level"] is None
+    assert result["model_name"] is None
+    assert result["model_version"] is None
+    assert result["prediction_timestamp"] is None
+    assert result["message"] is None
+    _assert_json(result)
+
+
+def test_prediction_rejects_invalid_id_before_data_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called = False
+
+    called_ids: list[object] = []
+
+    def forbidden(
+        application_id: object, *, include_explanation: bool
+    ) -> None:
+        nonlocal called
+        assert include_explanation is False
+        called_ids.append(application_id)
+        called = True
+
+    monkeypatch.setattr(
+        tools.data_access, "get_credit_risk_prediction", forbidden
+    )
+
+    result = tools.get_prediction(True)
+
+    assert result["status"] == "invalid"
+    assert result["probability"] is None
+    assert result["application_id"] is None
+    assert not called
+    assert called_ids == []
+    _assert_json(result)
+
+
+@pytest.mark.parametrize(
+    ("prediction_status", "expected_status"),
+    [
+        ("not_found", "not_found"),
+        ("no_prediction", "no_prediction"),
+        ("model_unavailable", "model_unavailable"),
+        ("unavailable", "unavailable"),
+        ("error", "error"),
+        ("invalid", "invalid"),
+    ],
+)
+def test_prediction_preserves_explicit_statuses(
+    monkeypatch: pytest.MonkeyPatch,
+    prediction_status: str,
+    expected_status: str,
+) -> None:
+    def prediction_with_status(
+        _application_id: int, *, include_explanation: bool
+    ) -> data_access.CreditRiskPrediction:
+        assert _application_id == 1001
+        assert include_explanation is False
+        return data_access.CreditRiskPrediction(
+            status=prediction_status, message="status-specific message"
+        )
+
+    monkeypatch.setattr(
+        tools.data_access,
+        "get_credit_risk_prediction",
+        prediction_with_status,
+    )
+
+    result = tools.get_prediction(1001)
+
+    assert result["status"] == expected_status
+    assert result["application_id"] == 1001
+    assert result["probability"] is None
+    assert result["message"] == "status-specific message"
+    _assert_json(result)
 
 
 def test_prediction_reports_data_access_errors_explicitly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail(_: object) -> data_access.CreditRiskPrediction:
+    def fail(
+        _: object, *, include_explanation: bool
+    ) -> data_access.CreditRiskPrediction:
+        assert include_explanation is False
         raise data_access.DataSourceUnavailableError("inference offline")
 
     monkeypatch.setattr(
@@ -330,7 +425,38 @@ def test_prediction_reports_data_access_errors_explicitly(
     )
     result = tools.get_prediction(1001)
     assert result["status"] == "unavailable"
-    assert result["message"] == "inference offline"
+    assert result["message"] == "Prediction service is unavailable."
+    _assert_json(result)
+
+    def malformed(
+        _: object, *, include_explanation: bool
+    ) -> data_access.CreditRiskPrediction:
+        assert include_explanation is False
+        raise data_access.MalformedProviderResponseError(
+            "C:\\internal\\secret\\response.json"
+        )
+
+    monkeypatch.setattr(
+        tools.data_access, "get_credit_risk_prediction", malformed
+    )
+    result = tools.get_prediction(1001)
+    assert result["status"] == "invalid"
+    assert result["message"] == "The prediction service returned an invalid response."
+    assert "secret" not in str(result)
+
+    def unexpected(
+        _: object, *, include_explanation: bool
+    ) -> data_access.CreditRiskPrediction:
+        assert include_explanation is False
+        raise data_access.DataAccessError("internal detail")
+
+    monkeypatch.setattr(
+        tools.data_access, "get_credit_risk_prediction", unexpected
+    )
+    result = tools.get_prediction(1001)
+    assert result["status"] == "error"
+    assert result["message"] == "Prediction retrieval failed."
+    assert "internal detail" not in str(result)
     _assert_json(result)
 
 
@@ -413,6 +539,79 @@ def test_graph_routes_to_only_the_selected_allowed_tool(
         "role": "assistant",
         "content": state["final_response"],
     }
+
+
+@pytest.mark.parametrize(
+    ("tool_status", "expected_status"),
+    [("available", "answered"), ("success", "success")],
+)
+def test_graph_executes_prediction_tool_and_preserves_its_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tool_status: str,
+    expected_status: str,
+) -> None:
+    from agent import graph
+
+    prediction = {
+        "status": tool_status,
+        "application_id": 1001,
+        "probability": 0.25,
+        "model_name": "XGBoost",
+        "model_version": "v2",
+    }
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, "get_prediction", lambda **_: prediction)
+    model = FakeChatModel("get_prediction", response="Prediction retrieved.")
+
+    state = graph.run_agent(
+        "Get prediction for application 1001.", model=model  # type: ignore[arg-type]
+    )
+
+    assert state["status"] == expected_status
+    assert state["tool_result"] == prediction
+    assert state["selected_tool"] == "get_prediction"
+    assert model.response_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("tool_status", "expected_status", "answer_fragment"),
+    [
+        ("not_found", "not_found", "No application was found"),
+        ("no_prediction", "no_prediction", "No prediction is available"),
+        ("model_unavailable", "model_unavailable", "model is unavailable"),
+        ("unavailable", "unavailable", "unavailable"),
+        ("invalid", "invalid", "invalid input"),
+        ("error", "error", "couldn't safely complete"),
+    ],
+)
+def test_graph_preserves_prediction_failure_statuses_without_llm_fabrication(
+    monkeypatch: pytest.MonkeyPatch,
+    tool_status: str,
+    expected_status: str,
+    answer_fragment: str,
+) -> None:
+    from agent import graph
+
+    result = {
+        "status": tool_status,
+        "application_id": 1001,
+        "probability": None,
+        "message": "The prediction service returned no score.",
+    }
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, "get_prediction", lambda **_: result)
+    model = FakeChatModel(
+        "get_prediction",
+        response="A fabricated answer must not be used.",
+    )
+
+    state = graph.run_agent(
+        "Get prediction for application 1001.", model=model  # type: ignore[arg-type]
+    )
+
+    assert state["status"] == expected_status
+    assert state["tool_result"] == result
+    assert answer_fragment.lower() in state["final_response"].lower()
+    assert "fabricated answer" not in state["final_response"].lower()
+    assert model.response_calls == 0
 
 
 @pytest.mark.parametrize(

@@ -217,55 +217,70 @@ def get_model_comparison() -> dict[str, Any]:
 
 
 def get_prediction(application_id: int | str) -> dict[str, Any]:
-    """Retrieve a prediction using the Task 9 data-access response contract."""
+    """Request a prediction through the configured API without an explanation."""
     source_mode = _source_mode()
+    parsed_id = data_access.parse_application_id(application_id)
+    response: dict[str, Any] = {
+        "status": "invalid",
+        "application_id": _application_id_for_output(application_id),
+        "probability": None,
+        "risk_level": None,
+        "model_name": None,
+        "model_version": None,
+        "prediction_timestamp": None,
+        "message": "A valid positive integer application ID is required.",
+        "source_mode": source_mode,
+    }
+    if parsed_id is None:
+        return response
+
+    response["application_id"] = parsed_id
+    response["message"] = None
     try:
-        prediction = data_access.get_credit_risk_prediction(application_id)
-    except data_access.DataSourceUnavailableError as error:
-        return {
-            "status": "unavailable",
-            "probability": None,
-            "model_name": None,
-            "model_version": None,
-            "prediction_timestamp": None,
-            "explanation": None,
-            "message": str(error),
-            "source_mode": source_mode,
-        }
-    except data_access.MalformedProviderResponseError as error:
-        return {
-            "status": "invalid",
-            "probability": None,
-            "model_name": None,
-            "model_version": None,
-            "prediction_timestamp": None,
-            "explanation": None,
-            "message": str(error),
-            "source_mode": source_mode,
-        }
+        prediction = data_access.get_credit_risk_prediction(
+            parsed_id, include_explanation=False
+        )
+    except data_access.DataSourceUnavailableError:
+        response.update(
+            status="unavailable",
+            message="Prediction service is unavailable.",
+        )
+        return response
+    except data_access.MalformedProviderResponseError:
+        response.update(
+            status="invalid",
+            message="The prediction service returned an invalid response.",
+        )
+        return response
+    except data_access.DataAccessError:
+        response.update(
+            status="error",
+            message="Prediction retrieval failed.",
+        )
+        return response
 
     try:
-        response = _json_value(
-            {
-                "status": prediction.status,
-                "probability": prediction.probability,
-                "model_name": prediction.model_name,
-                "model_version": prediction.model_version,
-                "prediction_timestamp": prediction.prediction_timestamp,
-                "explanation": prediction.explanation,
-                "message": prediction.message,
-                "source_mode": source_mode,
-            }
+        response.update(
+            _json_value(
+                {
+                    "status": prediction.status,
+                    "probability": prediction.probability,
+                    "risk_level": prediction.risk_level,
+                    "model_name": prediction.model_name,
+                    "model_version": prediction.model_version,
+                    "prediction_timestamp": prediction.prediction_timestamp,
+                    "message": prediction.message,
+                }
+            )
         )
-    except TypeError as error:
-        return {
-            "status": "invalid",
-            "probability": None,
-            "model_name": None,
-            "model_version": None,
-            "prediction_timestamp": None,
-            "explanation": None,
-            "message": str(error),
-            "source_mode": source_mode,
-        }
+    except (TypeError, ValueError):
+        response.update(
+            status="invalid",
+            probability=None,
+            risk_level=None,
+            model_name=None,
+            model_version=None,
+            prediction_timestamp=None,
+            message="The prediction service returned an invalid response.",
+        )
     return response

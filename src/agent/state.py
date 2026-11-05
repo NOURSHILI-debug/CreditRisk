@@ -16,6 +16,11 @@ AgentStatus = Literal[
     "invalid_input",
     "unsupported_request",
     "partial",
+    "success",
+    "invalid",
+    "not_found",
+    "no_prediction",
+    "model_unavailable",
     "unavailable",
     "error",
 ]

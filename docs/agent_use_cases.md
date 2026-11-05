@@ -40,22 +40,19 @@ The dashboard data-access contract is implemented in
 
 | Existing function or type | Actual behavior |
 |---|---|
-| `get_provider_name() -> str`, `is_mock_mode() -> bool` | Provider selection reads `CREDIT_RISK_DATA_PROVIDER`; the default provider is `mock`. Only the mock provider is implemented. An unknown or empty provider name is not silently replaced with mock. |
-| `get_data_provider() -> DashboardDataProvider` | Selects the mock implementation or raises `DataSourceUnavailableError`. The provider protocol exposes application, prediction, and evaluation retrieval. |
+| `get_provider_name() -> str`, `is_mock_mode() -> bool` | The current data-access layer reports `fastapi` and `False`, respectively. The dashboard and agent share the configured `APIClient`; no provider-selection setting is implemented in this layer. |
 | `get_applications() -> pandas.DataFrame` | Returns a copy of the configured provider's records. An empty DataFrame is valid. An unavailable source raises `DataSourceUnavailableError`; a non-DataFrame response raises `MalformedProviderResponseError`. |
 | `get_application_by_id(application_id, applications=None) -> ApplicationLookupResult` | Accepts a positive integer or a trimmed digit-only string; booleans, floats, zero/negative IDs, and other strings are invalid. Result status is `found`, `invalid_id`, `not_found`, `unavailable`, or `duplicate`. The `application` is a copied Series only for `found`. An empty source or missing `SK_ID_CURR` returns `unavailable`. |
 | `get_overview_metrics(applications=None) -> dict[str, Any]` | Returns `total_applications`, `target_0`, `target_1`, `difficulty_rate`, `unlabeled`, and `risk_distribution`. Target counts/rate use only valid `TARGET` values 0 and 1. Missing or wholly unusable target data produces `None` for target counts/rate; a missing `RISK_CATEGORY` produces an empty distribution. If it loads the source itself, provider errors propagate. |
 | `get_valid_target_values(applications) -> Series | None` | Returns only recognized binary target values, or `None` if `TARGET` is missing or has no usable values. |
-| `get_credit_risk_prediction(application_id) -> CreditRiskPrediction` | Returns the existing Task 9 dataclass contract: `status`, `probability`, `model_name`, `model_version`, `prediction_timestamp`, `explanation`, and `message`. It validates the ID and provider response. Probability must be a non-boolean, finite number in `[0, 1]`. It returns explicit `invalid`, `unavailable`, `no_prediction`, `model_unavailable`, or `available` status. |
+| `get_credit_risk_prediction(application_id) -> CreditRiskPrediction` | Validates the ID and calls the shared API client for fresh inference. It validates finite probabilities in `[0, 1]`, returns available model metadata, and distinguishes HTTP 404 (`not_found`) from HTTP 200 (`no_prediction`). SHAP remains available to callers that request it; the agent tool explicitly disables it. |
 | `get_model_evaluation_results() -> DataFrame | None` | Returns copied model/metric/value rows or `None`. The mock provider returns `None`. Unavailable sources and malformed provider types raise data-access errors. |
 | `normalize_model_evaluation_results(results)` | Validates the existing `model`, `metric`, `value` contract and returns `(values, statuses, issues)`. Supported models are XGBoost and LSTM; supported metrics are ROC-AUC, PR-AUC, Precision, Recall, and F1-score. Valid scores are finite values from 0 to 1. Missing, invalid, or duplicate rows remain unavailable and are reported in statuses/issues. |
 | `DataSourceUnavailableError`, `MalformedProviderResponseError` | Explicit provider/source errors. Pages handle these errors and render an unavailable state rather than inventing results. |
 
-The mock provider currently creates synthetic application records with IDs
-1001–1120, including `TARGET`, `RISK_CATEGORY`, and a synthetic
-`RISK_PROBABILITY` field. The latter is not a prediction response: the mock
-prediction method always reports unavailable. The mock provider also returns no
-evaluation results. Pages label mock data as demo data.
+The API client uses the configured FastAPI endpoint for application data and
+fresh inference. Saved validation/test prediction CSVs are loaded separately
+and used for aggregate summaries; they are not queried by application ID.
 
 The Overview page calculates category, target-by-category, and numeric
 distributions from the loaded DataFrame for presentation; they are not all
@@ -78,7 +75,7 @@ provenance. Their detailed statuses and output shapes are:
 | `get_application_details(application_id: int | str) -> dict[str, Any]` | Returns `status`, `application_id`, `fields`, `null_fields`, and `source_mode`, plus `message` where applicable. It delegates to `get_application_by_id`; null fields are listed separately. It omits the dashboard-derived `RISK_PROBABILITY` and `RISK_CATEGORY` fields so the synthetic risk score is not confused with an application fact or prediction. |
 | `get_dashboard_metrics() -> dict[str, Any]` | Returns `status`, `metrics`, and `source_mode`, plus `message` when unavailable or invalid. It loads one application snapshot and passes it to `get_overview_metrics`. An empty dataset has unavailable status while preserving the actual zero total and unavailable target metrics. |
 | `get_model_comparison() -> dict[str, Any]` | Returns `status`, `models` (model-to-metric values), per-model `statuses`, `issues`, and `source_mode`, plus `message` when appropriate. Overall status is `available`, `partial`, `unavailable`, or `invalid`; no missing score is filled. |
-| `get_prediction(application_id: int | str) -> dict[str, Any]` | Returns all Task 9 prediction fields (`status`, `probability`, `model_name`, `model_version`, `prediction_timestamp`, `explanation`, and `message`) plus `source_mode`. It delegates to `get_credit_risk_prediction` without calculating or substituting a score. |
+| `get_prediction(application_id: int | str) -> dict[str, Any]` | Validates the ID, requests fresh inference through `get_credit_risk_prediction` with explanations disabled, and returns `status`, `application_id`, `probability`, `risk_level`, model name/version, prediction timestamp, message, and `source_mode`. Optional prediction values remain null; SHAP output is not included. |
 
 Expected `DataSourceUnavailableError` results are returned with an explicit
 unavailable status; malformed provider or non-JSON-compatible payloads are
@@ -89,7 +86,7 @@ returned with invalid status. Unexpected exceptions are not silently caught.
 | Use case | Example questions | Required input | Proposed tool | Expected response | Possible failure or unavailable state |
 |---|---|---|---|---|---|
 | Application details | "Show the available details for application 1001." "Which fields are missing?" | One positive application ID | `get_application_details(application_id)` | Implemented: JSON-compatible lookup status, non-null application fields, and source-null field names. Omits dashboard-derived risk score/category fields. | Invalid ID, not found, duplicate ID, unavailable source/ID column, malformed provider response, or no fields to display. |
-| Credit-risk prediction | "Is a prediction available for application 1001?" "What probability and model version were returned?" | One positive application ID | `get_prediction(application_id)` | Implemented wrapper preserves provider status, probability, model name/version, timestamp, explanation, and message. Describe probability as the likelihood of `TARGET=1` only when that target interpretation is confirmed by the inference contract. | Invalid ID, no prediction, prediction provider unavailable, model unavailable, malformed response, or missing optional metadata. |
+| Credit-risk prediction | "Is a prediction available for application 1001?" "What probability and model version were returned?" | One positive application ID | `get_prediction(application_id)` | Runs fresh inference via `GET /applications/{application_id}/prediction` with `include_explanation=false`. Returns a JSON-compatible result with status, application ID, probability, risk level, available model name/version and timestamp, message, and source mode. Missing optional values remain null. | Invalid ID, application not found, valid application with no prediction, model unavailable, API connection failure, prediction execution failure, or malformed response. |
 | Dashboard metrics | "How many applications have valid targets?" "What are the target counts and available risk categories?" | No required input; optional scope only if the source supports it | `get_dashboard_metrics()` | Implemented: shared metric values and definitions, with unavailable target values remaining null. Empty data returns unavailable status and the actual zero total. | Provider unavailable, empty dataset, missing/invalid `TARGET`, absent risk field, malformed response, or mock-data source. |
 | Model comparison | "Compare the available XGBoost and LSTM metrics." "Which metrics are missing?" | No required input; optional period only if evaluation outputs support filtering | `get_model_comparison()` | Implemented wrapper returns normalized available supported metrics and per-model status. Never fills missing scores. | No evaluation results, one model absent, partial/invalid/duplicate metric rows, unavailable provider, malformed result type, or LSTM evaluation not available. |
 | Prediction explanation | "What explanation was returned for application 1001?" | One positive application ID | `explain_prediction(application_id)` | Display only explanation payloads returned by the prediction provider, with the related prediction/model metadata when available. | Invalid ID, prediction unavailable, explanation missing, unsupported explanation format, model unavailable, or provider unavailable. |
@@ -139,22 +136,32 @@ a documented result status or a raised, handled tool error.
 
 ### `get_prediction(application_id)`
 
-- **Purpose:** Retrieve one application's provider-supplied prediction.
-- **Input:** `application_id: int | str`, validated as above.
-- **Source/mapping:** `get_credit_risk_prediction(application_id)`.
-- **Proposed output:** The `CreditRiskPrediction` fields:
-  `{status, probability, model_name, model_version, prediction_timestamp,
-  explanation, message}`. Preserve `None` for absent optional values. The
-  probability is a number in `[0, 1]`; render as a percentage only for display.
-- **Validation/errors:** Preserve `invalid`, `unavailable`, `no_prediction`,
-  `model_unavailable`, and `available`. The normalizer rejects missing,
-  boolean, non-numeric, non-finite, and out-of-range probabilities as invalid.
-  Do not substitute the mock record's `RISK_PROBABILITY`.
-- **Status:** Implemented in `src/agent/tools.py` as a wrapper around the
-  existing retrieval boundary. The configured mock provider returns
-  `unavailable`. Real predictions, target meaning, model identity/version,
-  and timestamps depend on Person 1's inference provider and its agreed
-  response contract.
+- **Purpose:** Request fresh inference for one application through the configured
+  FastAPI service. This does not retrieve a previously saved per-application
+  prediction record.
+- **Input:** A positive integer or trimmed digit-only string. Booleans, floats,
+  zero/negative IDs, and other strings are rejected before the API is called.
+- **Source/mapping:** `get_credit_risk_prediction(application_id,
+  include_explanation=False)` uses the shared `APIClient` and
+  `GET /applications/{application_id}/prediction`. The GET route calls
+  `PredictionService` and runs the loaded predictor against the application
+  row. Saved validation/test prediction CSVs are used separately for aggregate
+  summaries.
+- **Output:** A JSON-compatible object containing `status`, `application_id`,
+  `probability`, `risk_level`, `model_name`, `model_version`,
+  `prediction_timestamp`, `message`, and `source_mode`. Missing optional
+  prediction fields remain null. The normal tool result excludes SHAP
+  explanations and applicant feature values.
+- **Status/errors:** `available` for a valid prediction; `invalid` for invalid
+  input, HTTP 422 inference validation failures, or malformed responses;
+  `not_found` for the prediction endpoint's HTTP 404; `no_prediction` for HTTP
+  200 without a prediction; `model_unavailable` when model artifacts cannot be
+  used; `unavailable` for API connection/service unavailability; and `error`
+  for other HTTP 5xx prediction failures. Probability is never filled or
+  substituted.
+- **Privacy:** `TARGET` is not returned by the application repository for
+  inference, and the normal prediction tool does not include explanation
+  feature contributions or raw feature values.
 
 ### `get_dashboard_metrics()`
 

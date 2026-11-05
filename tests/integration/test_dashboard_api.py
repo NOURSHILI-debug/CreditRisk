@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from api.config import Settings
 from api.main import create_app
+from agent import tools
 from dashboard import data_access
 from dashboard.api_client import APIClient
 
@@ -70,6 +71,26 @@ def test_dashboard_client_reads_real_prediction_and_shap(
         matched_features[0]["raw_feature"]
     ]
     assert prediction["explanation"]["probability"] == prediction["probability"]
+
+
+def test_agent_prediction_tool_runs_real_inference_without_shap(
+    connected_dashboard_client: tuple[TestClient, APIClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, client = connected_dashboard_client
+    monkeypatch.setattr(data_access, "_client", lambda: client)
+
+    prediction = tools.get_prediction(120321)
+
+    assert prediction["status"] == "available"
+    assert prediction["application_id"] == 120321
+    assert prediction["probability"] == pytest.approx(0.4915030896663666)
+    assert prediction["risk_level"] == "MEDIUM"
+    assert prediction["model_name"] == "XGBoost"
+    assert prediction["model_version"]
+    assert prediction["prediction_timestamp"]
+    assert "explanation" not in prediction
+    assert "TARGET" not in prediction
 
 
 def test_dashboard_client_reads_saved_prediction_and_evaluation_artifacts(

@@ -279,7 +279,14 @@ def build_agent_graph(
             }
 
         result_status = result.get("status")
-        if result_status in {"unavailable", "invalid"}:
+        if result_status in {
+            "invalid",
+            "not_found",
+            "no_prediction",
+            "model_unavailable",
+            "unavailable",
+            "error",
+        }:
             status = result_status
         elif result_status == "invalid_id":
             status = "invalid_input"
@@ -287,6 +294,8 @@ def build_agent_graph(
             status = "unavailable"
         elif result_status == "partial":
             status = "partial"
+        elif result_status == "success":
+            status = "success"
         elif result_status in {"found", "available"}:
             status = "answered"
         else:
@@ -304,8 +313,19 @@ def build_agent_graph(
                 "final_response": answer,
                 "messages": _append_assistant_message(state, answer),
             }
-        if status == "invalid_input":
+        if status in {"invalid_input", "invalid"}:
             answer = error or "The request contains invalid input."
+            return {
+                "final_response": answer,
+                "messages": _append_assistant_message(state, answer),
+            }
+        if status in {"not_found", "no_prediction", "model_unavailable"}:
+            messages = {
+                "not_found": "No application was found for that ID.",
+                "no_prediction": "No prediction is available for that application.",
+                "model_unavailable": "The prediction model is unavailable.",
+            }
+            answer = messages[status]
             return {
                 "final_response": answer,
                 "messages": _append_assistant_message(state, answer),
@@ -400,7 +420,7 @@ def build_agent_graph(
             }
 
         return {
-            "status": "answered",
+            "status": "success" if status == "success" else "answered",
             "final_response": answer,
             "messages": _append_assistant_message(state, answer),
         }

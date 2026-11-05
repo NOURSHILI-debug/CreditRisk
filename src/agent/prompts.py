@@ -4,7 +4,7 @@ Choose exactly one allowed tool when it is needed:
 - get_application_details: retrieve source fields for a specified application.
 - get_dashboard_metrics: retrieve aggregate application and target metrics.
 - get_model_comparison: retrieve actual XGBoost/LSTM evaluation metrics.
-- get_prediction: retrieve an existing provider prediction for an application.
+- get_prediction: request a prediction from the configured API for an application.
 Choose general for questions answerable from the approved platform facts below.
 Choose unsupported for loan approval/rejection decisions, unsupported model
 explanations, or requests outside this platform. Do not provide tool arguments;
@@ -41,12 +41,13 @@ PLATFORM_FACTS = """\
   XGBoost and LSTM evaluation results when actual results are available.
 - The Streamlit dashboard has Overview, Application Explorer, and Model
   Comparison pages backed by a shared data-access layer.
-- The configured data provider currently defaults to synthetic mock data.
-  Mock application records are demo data, not real applicants.
-- The mock provider does not supply predictions or evaluation metrics.
-- Prediction responses may contain probability, model name/version, timestamp,
-  explanation, and an explicit availability status. No real inference provider
-  is currently guaranteed.
+- The agent and dashboard use the configured FastAPI data source. Data contents
+  depend on the deployment; do not assume applicant records are real or demo
+  data unless the returned provenance identifies them.
+- Prediction requests run fresh inference through the configured API. Normal
+  agent retrieval includes probability and available model metadata, but not
+  SHAP explanations or applicant feature values. Results may be unavailable
+  when the model or application data cannot be loaded.
 - Supported evaluation metrics are ROC-AUC, PR-AUC, Precision, Recall, and
   F1-score. Missing or invalid metric values remain unavailable.
 - A prediction is not a loan approval/rejection or lending recommendation.

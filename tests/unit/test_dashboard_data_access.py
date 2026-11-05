@@ -111,6 +111,193 @@ def test_application_lookup_and_prediction_are_backed_by_api(
     assert prediction.explanation == {"top_features": []}
 
 
+def test_prediction_without_explanation_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/applications/1001/prediction"
+        assert request.url.params["include_explanation"] == "false"
+        return httpx.Response(
+            200,
+            json={
+                "status": "available",
+                "application_id": 1001,
+                "probability": 0.25,
+                "model_name": "XGBoost",
+                "model_version": "v2",
+                "prediction_timestamp": "2026-11-04T12:00:00Z",
+            },
+        )
+
+    client, http_client = _client(handler)
+    monkeypatch.setattr(data_access, "_client", lambda: client)
+    try:
+        result = data_access.get_credit_risk_prediction(
+            1001, include_explanation=False
+        )
+    finally:
+        http_client.close()
+
+    assert result.status == "available"
+    assert result.probability == 0.25
+    assert result.explanation is None
+
+
+@pytest.mark.parametrize(
+    ("response_status", "payload", "expected_status"),
+    [
+        (404, {"status": "no_prediction", "message": "Application missing."}, "not_found"),
+        (
+            503,
+            {
+                "status": "model_unavailable",
+                "message": "Model artifacts are unavailable.",
+                "model_name": "XGBoost",
+                "model_version": "v2",
+                "prediction_timestamp": "2026-11-04T12:00:00Z",
+            },
+            "model_unavailable",
+        ),
+        (
+            503,
+            {"status": "unavailable", "message": "Application data unavailable."},
+            "unavailable",
+        ),
+    ],
+)
+def test_prediction_http_errors_keep_distinct_statuses(
+    monkeypatch: pytest.MonkeyPatch,
+    response_status: int,
+    payload: dict[str, object],
+    expected_status: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/applications/1001/prediction"
+        assert request.url.params["include_explanation"] == "false"
+        return httpx.Response(response_status, json=payload)
+
+    client, http_client = _client(handler)
+    monkeypatch.setattr(data_access, "_client", lambda: client)
+    try:
+        result = data_access.get_credit_risk_prediction(
+            1001, include_explanation=False
+        )
+    finally:
+        http_client.close()
+
+    assert result.status == expected_status
+    assert result.probability is None
+    if expected_status == "model_unavailable":
+        assert result.model_name == "XGBoost"
+        assert result.model_version == "v2"
+        assert result.prediction_timestamp == "2026-11-04T12:00:00Z"
+
+
+def test_valid_application_without_prediction_is_not_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["include_explanation"] == "false"
+        return httpx.Response(
+            200,
+            json={
+                "status": "no_prediction",
+                "application_id": 1001,
+                "probability": None,
+                "message": "No prediction is available.",
+            },
+        )
+
+    client, http_client = _client(handler)
+    monkeypatch.setattr(data_access, "_client", lambda: client)
+    try:
+        result = data_access.get_credit_risk_prediction(
+            1001, include_explanation=False
+        )
+    finally:
+        http_client.close()
+
+    assert result.status == "no_prediction"
+    assert result.probability is None
+
+
+def test_unexpected_prediction_404_is_not_reported_as_missing_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/applications/1001/prediction"
+        return httpx.Response(404, json={"status": "invalid", "message": "missing"})
+
+    client, http_client = _client(handler)
+    monkeypatch.setattr(data_access, "_client", lambda: client)
+    try:
+        result = data_access.get_credit_risk_prediction(
+            1001, include_explanation=False
+        )
+    finally:
+        http_client.close()
+
+    assert result.status == "invalid"
+    assert result.probability is None
+
+
+def test_prediction_connection_and_malformed_response_errors_are_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def connection_failure(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    client, http_client = _client(connection_failure)
+    monkeypatch.setattr(data_access, "_client", lambda: client)
+    try:
+        with pytest.raises(data_access.DataSourceUnavailableError):
+            data_access.get_credit_risk_prediction(
+                1001, include_explanation=False
+            )
+    finally:
+        http_client.close()
+
+    def malformed_success(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/applications/1001/prediction"
+        return httpx.Response(
+            200,
+            json={"status": "available", "probability": "not-a-number"},
+        )
+
+    client, http_client = _client(malformed_success)
+    monkeypatch.setattr(data_access, "_client", lambda: client)
+    try:
+        malformed = data_access.get_credit_risk_prediction(
+            1001, include_explanation=False
+        )
+    finally:
+        http_client.close()
+    assert malformed.status == "invalid"
+    assert malformed.probability is None
+
+
+def test_prediction_execution_failure_has_error_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/applications/1001/prediction"
+        return httpx.Response(
+            500, json={"status": "invalid", "message": "Internal server error."}
+        )
+
+    client, http_client = _client(handler)
+    monkeypatch.setattr(data_access, "_client", lambda: client)
+    try:
+        result = data_access.get_credit_risk_prediction(
+            1001, include_explanation=False
+        )
+    finally:
+        http_client.close()
+
+    assert result.status == "error"
+    assert result.probability is None
+
+
 def test_missing_application_is_not_misreported_as_api_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

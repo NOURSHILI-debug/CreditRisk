@@ -185,6 +185,14 @@ def test_prediction_by_application_id_and_explanation(tiny_client: TestClient) -
     assert payload["explanation"] is None
     assert "model_hash" not in payload
 
+    retrieved = tiny_client.get("/applications/2/prediction")
+    assert retrieved.status_code == 200
+    retrieved_payload = retrieved.json()
+    assert retrieved_payload["status"] == "available"
+    assert retrieved_payload["application_id"] == 2
+    assert retrieved_payload["probability"] == payload["probability"]
+    assert retrieved_payload["explanation"] is None
+
     explained = tiny_client.post(
         "/predict",
         params={"include_explanation": True},
