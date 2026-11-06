@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from dashboard import data_access
+from agent.report_generator import generate_report as _generate_report
 
 LOGGER = logging.getLogger(__name__)
 _NON_APPLICATION_OUTPUT_FIELDS = {"RISK_PROBABILITY", "RISK_CATEGORY"}
@@ -22,6 +23,17 @@ _PREDICTION_FAILURE_MESSAGES = {
     "unavailable": "The prediction service is unavailable.",
     "error": "Prediction execution failed.",
 }
+
+
+def generate_report(period: str) -> dict[str, Any]:
+    """Build an aggregate report through the shared dashboard data layer."""
+    try:
+        return _generate_report(period)
+    except ValueError as error:
+        return {"status": "invalid", "message": str(error)}
+    except Exception as error:
+        LOGGER.warning("agent_report_generation_failed error_type=%s", type(error).__name__)
+        return {"status": "error", "message": "The report could not be generated safely."}
 
 
 def _source_mode() -> str:

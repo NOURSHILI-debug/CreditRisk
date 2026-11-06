@@ -6,17 +6,15 @@ import os
 import re
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
-from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent import prompts, tools
-from agent.state import AgentMessage, AgentState, AgentTool
+from agent.state import AgentConversationContext, AgentMessage, AgentState, AgentTool
 
 logger = logging.getLogger(__name__)
 
@@ -46,19 +44,20 @@ _ALLOWED_TOOLS: dict[AgentTool, Callable[..., dict[str, Any]]] = {
     "get_model_comparison": tools.get_model_comparison,
     "get_prediction": tools.get_prediction,
     "explain_prediction": tools.explain_prediction,
+    "generate_report": tools.generate_report,
 }
 _APPLICATION_TOOLS = {
     "get_application_details",
     "get_prediction",
     "explain_prediction",
 }
-_AGENT_CHECKPOINTER = InMemorySaver()
 _ROUTABLE_TOOLS = Literal[
     "get_application_details",
     "get_dashboard_metrics",
     "get_model_comparison",
     "get_prediction",
     "explain_prediction",
+    "generate_report",
     "general",
     "unsupported",
 ]
@@ -81,8 +80,6 @@ class RouteDecision(BaseModel):
     def validate_route(self) -> "RouteDecision":
         if self.tools and self.tool is not None:
             raise ValueError("Choose either one legacy tool or a tools list.")
-        if len(set(self.tools)) != len(self.tools):
-            raise ValueError("Duplicate tools are not allowed.")
         if self.tool in {"general", "unsupported"} and self.tools:
             raise ValueError("General and unsupported routes cannot select tools.")
         return self
@@ -190,7 +187,16 @@ def _append_assistant_message(state: AgentState, content: str) -> list[AgentMess
 
 def _selected_tools(decision: RouteDecision) -> list[AgentTool]:
     if decision.tools:
-        return list(dict.fromkeys(decision.tools))
+        unique_tools = list(dict.fromkeys(decision.tools))
+        order = {
+            "get_application_details": 0,
+            "get_prediction": 1,
+            "explain_prediction": 2,
+            "get_model_comparison": 3,
+            "get_dashboard_metrics": 4,
+            "generate_report": 5,
+        }
+        return sorted(unique_tools, key=order.__getitem__)
     if decision.tool in _ALLOWED_TOOLS:
         return [decision.tool]
     return []
@@ -215,6 +221,8 @@ def _result_status(result: Mapping[str, Any]) -> str:
     if status == "partial":
         return "partial"
     if status == "success":
+        return "success"
+    if status == "complete":
         return "success"
     if status in {"found", "available"}:
         return "answered"
@@ -331,6 +339,8 @@ def build_agent_graph(
                     "selected_tools": [],
                     "tool_arguments": {},
                     "error": validation_error,
+                    "current_application_id": None,
+                    "last_intent": "invalid_input",
                 }
             if application_id is None:
                 has_context_reference = bool(
@@ -338,7 +348,11 @@ def build_agent_graph(
                 )
                 is_explanation_followup = (
                     "explain_prediction" in application_tools
-                    and last_intent in {"get_prediction", "explain_prediction"}
+                    and bool(
+                        {"get_prediction", "explain_prediction"}.intersection(
+                            (last_intent or "").split("+")
+                        )
+                    )
                 )
                 if (
                     current_application_id is not None
@@ -372,6 +386,19 @@ def build_agent_graph(
             retained_id = application_id
         else:
             arguments = {}
+            if "generate_report" in selected_tools:
+                report_periods = re.findall(
+                    r"\b(\d+\s*(?:d|days?)|all)\b", question, re.IGNORECASE
+                )
+                if report_periods:
+                    period = re.sub(r"\s+", "", report_periods[0]).lower()
+                    if period.endswith("days"):
+                        period = period[:-4] + "d"
+                    elif period.endswith("day"):
+                        period = period[:-3] + "d"
+                    arguments["period"] = period
+                else:
+                    arguments["period"] = "all"
             intent = "+".join(selected_tools)
             retained_id = None
         return {
@@ -427,7 +454,7 @@ def build_agent_graph(
                 "tool_results": {},
                 "tool_statuses": {},
             }
-        if not has_application_tool and arguments:
+        if not has_application_tool and set(arguments) - {"period"}:
             return {
                 "status": "invalid_input",
                 "error": "Unexpected tool arguments were rejected.",
@@ -438,11 +465,23 @@ def build_agent_graph(
 
         results: dict[str, dict[str, Any]] = {}
         statuses: dict[str, str] = {}
+        execution_errors: list[str] = []
         for selected_tool in selected_tools:
             tool_arguments: dict[str, int | str] = {}
             if selected_tool in _APPLICATION_TOOLS:
                 # The ID comes from Python extraction or the session context, never the router.
                 tool_arguments["application_id"] = int(application_id)
+            elif selected_tool == "generate_report":
+                period = arguments.get("period", "all")
+                if not isinstance(period, str):
+                    return {
+                        "status": "invalid_input",
+                        "error": "Report period must be one of 7d, 30d, 90d, or all.",
+                        "tool_result": None,
+                        "tool_results": {},
+                        "tool_statuses": {},
+                    }
+                tool_arguments["period"] = period
             try:
                 result = _ALLOWED_TOOLS[selected_tool](**tool_arguments)
                 if not isinstance(result, dict):
@@ -452,7 +491,10 @@ def build_agent_graph(
                     result_application_id = result.get("application_id")
                     if (
                         result_application_id is not None
-                        and result_application_id != application_id
+                        and (
+                            isinstance(result_application_id, bool)
+                            or result_application_id != application_id
+                        )
                     ):
                         raise ValueError("Prediction result application ID mismatch.")
                     if (
@@ -460,12 +502,27 @@ def build_agent_graph(
                         and result_application_id != application_id
                     ):
                         raise ValueError("Prediction result application ID is missing.")
-                status = _result_status(result)
-                if status == "invalid":
+                if result.get("status") not in {
+                    "complete",
+                    "available",
+                    "success",
+                    "found",
+                    "partial",
+                    "unavailable",
+                    "invalid",
+                    "invalid_id",
+                    "duplicate",
+                    "not_found",
+                    "no_prediction",
+                    "model_unavailable",
+                    "explanation_unavailable",
+                    "error",
+                }:
                     result = {
                         "status": "invalid",
                         "message": "The tool returned an unexpected or malformed result.",
                     }
+                status = _result_status(result)
             except Exception as error:
                 logger.error(
                     "Agent tool %s failed (%s).",
@@ -477,6 +534,7 @@ def build_agent_graph(
                     "message": "The requested data could not be retrieved safely.",
                 }
                 status = "error"
+                execution_errors.append(f"tool_failed:{type(error).__name__}")
             results[selected_tool] = result
             statuses[selected_tool] = status
 
@@ -516,7 +574,13 @@ def build_agent_graph(
             "tool_results": results,
             "tool_statuses": statuses,
             "status": overall_status,
-            "error": None,
+            "error": (
+                execution_errors[0]
+                if len(execution_errors) == 1
+                else "multiple_tool_failures"
+                if execution_errors
+                else None
+            ),
         }
 
     def generate_response(state: AgentState) -> dict[str, Any]:
@@ -536,12 +600,20 @@ def build_agent_graph(
                 "final_response": answer,
                 "messages": _append_assistant_message(state, answer),
             }
+        comparison_result = None
+        if state.get("selected_tool") == "get_model_comparison":
+            comparison_result = tool_result
+        elif isinstance(tool_result, Mapping):
+            tool_results = tool_result.get("tool_results")
+            if isinstance(tool_results, Mapping):
+                candidate = tool_results.get("get_model_comparison")
+                if isinstance(candidate, Mapping):
+                    comparison_result = candidate
         if (
-            state.get("selected_tool") == "get_model_comparison"
-            and tool_result is not None
-            and tool_result.get("comparison_available") is False
+            comparison_result is not None
+            and comparison_result.get("comparison_available") is False
         ):
-            note = tool_result.get("comparison_note")
+            note = comparison_result.get("comparison_note")
             answer = (
                 "A direct model comparison is not justified. "
                 f"{note if isinstance(note, str) and note else 'Evaluation protocol comparability is unavailable.'}\n"
@@ -592,6 +664,14 @@ def build_agent_graph(
                 "Partial results were returned. Missing values are unavailable; "
                 "the data below contains only retrieved values."
             )
+            if comparison_result is not None and comparison_result.get(
+                "comparison_available"
+            ) is False:
+                note = comparison_result.get("comparison_note")
+                prefix += (
+                    " A direct model comparison is not justified. "
+                    f"{note if isinstance(note, str) and note else ''}"
+                )
             if source_mode == "mock":
                 prefix += " The configured source is labeled mock/demo data."
             answer = (
@@ -700,15 +780,19 @@ def run_agent(
     question: str,
     *,
     model: BaseChatModel | None = None,
+    context: AgentConversationContext | None = None,
 ) -> AgentState:
-    """Run one user question and return its structured, single-turn result."""
+    """Run one turn, optionally updating caller-owned session context."""
     if not isinstance(question, str) or not question.strip():
         return AgentState(
             question=question if isinstance(question, str) else "",
             messages=[],
             selected_tool=None,
+            selected_tools=[],
             tool_arguments={},
             tool_result=None,
+            tool_results={},
+            tool_statuses={},
             final_response="A non-empty question is required.",
             status="invalid_input",
             error="A non-empty question is required.",
@@ -718,10 +802,21 @@ def run_agent(
         question=question.strip(),
         messages=[{"role": "user", "content": question.strip()}],
         selected_tool=None,
+        selected_tools=[],
         tool_arguments={},
         tool_result=None,
+        tool_results={},
+        tool_statuses={},
+        current_application_id=(
+            context.current_application_id if context is not None else None
+        ),
+        last_intent=context.last_intent if context is not None else None,
         final_response="",
         status="pending",
         error=None,
     )
-    return graph.invoke(initial_state)
+    result = graph.invoke(initial_state)
+    if context is not None:
+        context.current_application_id = result.get("current_application_id")
+        context.last_intent = result.get("last_intent")
+    return result
