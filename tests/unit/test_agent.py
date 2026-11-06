@@ -773,21 +773,46 @@ def test_explain_prediction_handles_data_access_and_execution_errors(
 
 
 class FakeStructuredRouter:
-    def __init__(self, tool: str) -> None:
+    def __init__(
+        self,
+        tool: str,
+        tools: list[str] | None = None,
+        needs_clarification: bool = False,
+    ) -> None:
         self.tool = tool
+        self.tools = tools
+        self.needs_clarification = needs_clarification
 
-    def invoke(self, _: object) -> dict[str, str]:
+    def invoke(self, _: object) -> dict[str, object]:
+        if self.tools is not None:
+            return {
+                "tools": self.tools,
+                "needs_clarification": self.needs_clarification,
+            }
         return {"tool": self.tool}
 
 
 class FakeChatModel:
-    def __init__(self, tool: str, response: str = "Grounded response.") -> None:
+    def __init__(
+        self,
+        tool: str,
+        response: str = "Grounded response.",
+        *,
+        tools: list[str] | None = None,
+        needs_clarification: bool = False,
+    ) -> None:
         self.tool = tool
         self.response = response
+        self.tools = tools
+        self.needs_clarification = needs_clarification
         self.response_calls = 0
 
     def with_structured_output(self, _: object) -> FakeStructuredRouter:
-        return FakeStructuredRouter(self.tool)
+        return FakeStructuredRouter(
+            self.tool,
+            tools=self.tools,
+            needs_clarification=self.needs_clarification,
+        )
 
     def invoke(self, _: object) -> object:
         self.response_calls += 1
@@ -868,6 +893,302 @@ def test_graph_routes_to_only_the_selected_allowed_tool(
         "role": "assistant",
         "content": state["final_response"],
     }
+
+
+def test_graph_executes_prediction_and_explanation_once_for_same_applicant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+
+    calls: list[tuple[str, int]] = []
+
+    def prediction(application_id: int) -> dict[str, object]:
+        calls.append(("get_prediction", application_id))
+        return {
+            "status": "available",
+            "application_id": application_id,
+            "probability": 0.62,
+            "risk_level": "HIGH",
+        }
+
+    def explanation(application_id: int) -> dict[str, object]:
+        calls.append(("explain_prediction", application_id))
+        return {
+            "status": "available",
+            "application_id": application_id,
+            "top_features": [
+                {
+                    "feature": "EXT_SOURCE_2",
+                    "shap_value": 0.4,
+                    "effect": "increases_risk",
+                }
+            ],
+        }
+
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, "get_prediction", prediction)
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, "explain_prediction", explanation)
+    model = FakeChatModel(
+        "general",
+        tools=["get_prediction", "explain_prediction", "get_prediction"],
+        response="The retrieved prediction and explanation are consistent.",
+    )
+
+    state = graph.run_agent(
+        "Predict the credit risk for applicant 100001 and explain why.",
+        model=model,  # type: ignore[arg-type]
+    )
+
+    assert calls == [
+        ("get_prediction", 100001),
+        ("explain_prediction", 100001),
+    ]
+    assert state["status"] == "answered"
+    assert state["tool_statuses"] == {
+        "get_prediction": "answered",
+        "explain_prediction": "answered",
+    }
+    assert state["tool_results"]["get_prediction"]["application_id"] == 100001
+    assert state["tool_results"]["explain_prediction"]["application_id"] == 100001
+    assert model.response_calls == 1
+
+
+def test_graph_preserves_partial_success_when_one_requested_tool_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+
+    monkeypatch.setitem(
+        graph._ALLOWED_TOOLS,
+        "get_prediction",
+        lambda application_id: {
+            "status": "available",
+            "application_id": application_id,
+            "probability": 0.62,
+        },
+    )
+
+    def fail_explanation(application_id: int) -> dict[str, object]:
+        raise RuntimeError(f"failure for {application_id}")
+
+    monkeypatch.setitem(
+        graph._ALLOWED_TOOLS, "explain_prediction", fail_explanation
+    )
+    model = FakeChatModel(
+        "general",
+        tools=["get_prediction", "explain_prediction"],
+        response="A fabricated explanation must not be used.",
+    )
+
+    state = graph.run_agent(
+        "Predict applicant 100001 and explain it.",
+        model=model,  # type: ignore[arg-type]
+    )
+
+    assert state["status"] == "partial"
+    assert state["tool_statuses"] == {
+        "get_prediction": "answered",
+        "explain_prediction": "error",
+    }
+    assert state["tool_results"]["get_prediction"]["probability"] == 0.62
+    assert state["tool_results"]["explain_prediction"]["status"] == "error"
+    assert "failure for 100001" not in str(state)
+    assert "fabricated explanation" not in state["final_response"]
+    assert model.response_calls == 0
+
+
+def test_graph_runs_prediction_and_model_comparison_without_duplicate_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+
+    calls: list[str] = []
+    monkeypatch.setitem(
+        graph._ALLOWED_TOOLS,
+        "get_prediction",
+        lambda application_id: (
+            calls.append(f"prediction:{application_id}")
+            or {
+                "status": "available",
+                "application_id": application_id,
+                "probability": 0.62,
+            }
+        ),
+    )
+    monkeypatch.setitem(
+        graph._ALLOWED_TOOLS,
+        "get_model_comparison",
+        lambda: (
+            calls.append("comparison")
+            or {
+                "status": "partial",
+                "models": {"XGBoost": {"ROC-AUC": 0.76}, "LSTM": None},
+                "comparison_available": False,
+                "comparison_note": "LSTM evaluation is unavailable.",
+            }
+        ),
+    )
+    model = FakeChatModel(
+        "general",
+        tools=["get_prediction", "get_model_comparison", "get_model_comparison"],
+    )
+
+    state = graph.run_agent(
+        "Predict applicant 100001 and tell me how the model performs overall.",
+        model=model,  # type: ignore[arg-type]
+    )
+
+    assert calls == ["prediction:100001", "comparison"]
+    assert state["status"] == "partial"
+    assert state["tool_statuses"] == {
+        "get_prediction": "answered",
+        "get_model_comparison": "partial",
+    }
+    assert "direct model comparison is not justified" in state["final_response"]
+    assert model.response_calls == 0
+
+
+def test_agent_session_context_resolves_followup_and_new_id_replaces_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+    from agent.state import AgentConversationContext
+
+    calls: list[tuple[str, int]] = []
+
+    def prediction(application_id: int) -> dict[str, object]:
+        calls.append(("get_prediction", application_id))
+        return {
+            "status": "available",
+            "application_id": application_id,
+            "probability": 0.6,
+        }
+
+    def explanation(application_id: int) -> dict[str, object]:
+        calls.append(("explain_prediction", application_id))
+        return {
+            "status": "available",
+            "application_id": application_id,
+            "top_features": [],
+        }
+
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, "get_prediction", prediction)
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, "explain_prediction", explanation)
+    context = AgentConversationContext()
+    first = graph.run_agent(
+        "Predict applicant 100001.",
+        model=FakeChatModel("get_prediction"),  # type: ignore[arg-type]
+        context=context,
+    )
+    followup = graph.run_agent(
+        "Can you explain why?",
+        model=FakeChatModel("explain_prediction"),  # type: ignore[arg-type]
+        context=context,
+    )
+    next_applicant = graph.run_agent(
+        "What about applicant 100002?",
+        model=FakeChatModel("get_prediction"),  # type: ignore[arg-type]
+        context=context,
+    )
+
+    assert first["tool_result"]["application_id"] == 100001
+    assert followup["tool_result"]["application_id"] == 100001
+    assert followup["tool_arguments"] == {"application_id": 100001}
+    assert next_applicant["tool_arguments"] == {"application_id": 100002}
+    assert context.current_application_id == 100002
+    assert calls == [
+        ("get_prediction", 100001),
+        ("explain_prediction", 100001),
+        ("get_prediction", 100002),
+    ]
+
+
+def test_agent_session_context_isolation_and_ambiguous_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+    from agent.state import AgentConversationContext
+
+    calls: list[int] = []
+
+    def explanation(application_id: int) -> dict[str, object]:
+        calls.append(application_id)
+        return {
+            "status": "available",
+            "application_id": application_id,
+            "top_features": [],
+        }
+
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, "explain_prediction", explanation)
+    first_session = AgentConversationContext(current_application_id=100001)
+    isolated_session = AgentConversationContext()
+    no_context = graph.run_agent(
+        "Can you explain why?",
+        model=FakeChatModel("explain_prediction"),  # type: ignore[arg-type]
+        context=isolated_session,
+    )
+    explicit_reference = graph.run_agent(
+        "Explain why for this applicant.",
+        model=FakeChatModel("explain_prediction"),  # type: ignore[arg-type]
+        context=first_session,
+    )
+
+    assert no_context["status"] == "needs_clarification"
+    assert no_context["tool_result"] is None
+    assert explicit_reference["tool_arguments"] == {"application_id": 100001}
+    assert calls == [100001]
+
+
+def test_invalid_new_application_id_clears_previous_session_context() -> None:
+    from agent import graph
+    from agent.state import AgentConversationContext
+
+    context = AgentConversationContext(
+        current_application_id=100001,
+        last_intent="get_prediction",
+    )
+    state = graph.run_agent(
+        "Predict applicant -5.",
+        model=FakeChatModel("get_prediction"),  # type: ignore[arg-type]
+        context=context,
+    )
+
+    assert state["status"] == "invalid_input"
+    assert context.current_application_id is None
+    assert context.last_intent == "invalid_input"
+
+
+def test_agent_does_not_reuse_previous_tool_result_as_fresh_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+    from agent.state import AgentConversationContext
+
+    seen: list[int] = []
+
+    def prediction(application_id: int) -> dict[str, object]:
+        seen.append(application_id)
+        return {
+            "status": "available",
+            "application_id": application_id,
+            "probability": 0.4 if len(seen) == 1 else 0.7,
+        }
+
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, "get_prediction", prediction)
+    context = AgentConversationContext()
+    first = graph.run_agent(
+        "Predict applicant 100001.",
+        model=FakeChatModel("get_prediction"),  # type: ignore[arg-type]
+        context=context,
+    )
+    second = graph.run_agent(
+        "What about this applicant?",
+        model=FakeChatModel("get_prediction"),  # type: ignore[arg-type]
+        context=context,
+    )
+
+    assert first["tool_result"]["probability"] == 0.4
+    assert second["tool_result"]["probability"] == 0.7
+    assert seen == [100001, 100001]
 
 
 @pytest.mark.parametrize(
