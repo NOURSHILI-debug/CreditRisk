@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
 AgentTool = Literal[
@@ -33,14 +34,27 @@ class AgentMessage(TypedDict):
     content: str
 
 
+@dataclass
+class AgentConversationContext:
+    """Caller-owned, session-scoped context; stores no applicant records or results."""
+
+    current_application_id: int | None = None
+    last_intent: str | None = None
+
+
 class AgentState(TypedDict, total=False):
-    """Single-turn agent state; messages retain only the question and response."""
+    """One graph turn plus minimal caller-provided session context."""
 
     question: str
     messages: list[AgentMessage]
     selected_tool: AgentTool | None
+    selected_tools: list[AgentTool]
     tool_arguments: dict[str, int | str]
     tool_result: dict[str, Any] | None
+    tool_results: dict[str, dict[str, Any]]
+    tool_statuses: dict[str, str]
+    current_application_id: int | None
+    last_intent: str | None
     final_response: str
     status: AgentStatus
     error: str | None

@@ -279,7 +279,20 @@ Real response (test split):
     "n_samples": 46127,
     "class_counts": {"0": 42403, "1": 3724},
     "source": "evaluation_results.json",
-    "lstm_available": false
+    "lstm_available": false,
+    "target": {
+      "name": "TARGET",
+      "positive_class": 1,
+      "positive_label": "repayment difficulty",
+      "probability_semantics": "P(TARGET=1)"
+    },
+    "metric_definitions": {
+      "roc_auc": "Area under the receiver operating characteristic curve.",
+      "pr_auc": "Area under the precision-recall curve (average_precision_score).",
+      "precision": "TP / (TP + FP) at the stated threshold; zero_division=0.",
+      "recall": "TP / (TP + FN) at the stated threshold; zero_division=0.",
+      "f1": "Harmonic mean of precision and recall at the stated threshold."
+    }
   },
   "confusion_matrix": {
     "labels": [0, 1],
@@ -293,6 +306,11 @@ Real response (test split):
 ```
 
 Missing or unreadable evaluation artifact → 503 `model_unavailable`.
+The added `target` and `metric_definitions` provenance entries are read from
+the saved evaluation artifact. They allow consumers to verify the positive
+class and metric semantics; their presence does not imply that another model
+has evaluation results. The current endpoint returns XGBoost rows only, so a
+direct XGBoost/LSTM comparison is unavailable.
 
 ### `GET /model/prediction-summary`
 

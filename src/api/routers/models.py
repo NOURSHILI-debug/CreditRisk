@@ -113,6 +113,8 @@ def model_evaluation(
         "class_counts": metrics.get("class_counts"),
         "source": "evaluation_results.json",
         "lstm_available": False,
+        "target": artifact.get("target"),
+        "metric_definitions": artifact.get("metric_definitions"),
     }
     return EvaluationResponse(
         split=split,
