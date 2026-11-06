@@ -76,9 +76,11 @@ class ApplicationLookupResult:
 PredictionStatus = Literal[
     "available",
     "no_prediction",
+    "not_found",
     "unavailable",
     "model_unavailable",
     "invalid",
+    "error",
 ]
 
 
@@ -120,9 +122,20 @@ def normalize_prediction_response(response: Any) -> CreditRiskPrediction:
         )
 
     status = response.get("status")
-    if status in ("unavailable", "model_unavailable", "no_prediction"):
+    if status in (
+        "unavailable",
+        "model_unavailable",
+        "no_prediction",
+        "not_found",
+        "error",
+    ):
         return CreditRiskPrediction(
             status=status,
+            model_name=_prediction_metadata(response.get("model_name")),
+            model_version=_prediction_metadata(response.get("model_version")),
+            prediction_timestamp=_prediction_metadata(
+                response.get("prediction_timestamp")
+            ),
             message=_prediction_metadata(response.get("message")),
         )
     if status != "available":
@@ -304,20 +317,40 @@ def get_credit_risk_prediction(
         )
     except APIResponseError as error:
         if error.status_code == 404:
+            if (
+                isinstance(error.payload, dict)
+                and error.payload.get("status") == "no_prediction"
+            ):
+                return CreditRiskPrediction(
+                    status="not_found", message="Application was not found."
+                )
             return CreditRiskPrediction(
-                status="no_prediction", message=str(error)
+                status="invalid",
+                message="The prediction API returned an unexpected not-found response.",
             )
         if error.status_code == 503 and isinstance(error.payload, dict):
             return normalize_prediction_response(error.payload)
         if error.status_code == 503:
             return CreditRiskPrediction(
-                status="unavailable", message=str(error)
+                status="unavailable", message="Prediction service is unavailable."
             )
         if error.status_code == 422:
-            return CreditRiskPrediction(status="invalid", message=str(error))
-        raise MalformedProviderResponseError(str(error)) from error
-    except APIClientError as error:
+            return CreditRiskPrediction(
+                status="invalid", message="Prediction input or execution was invalid."
+            )
+        if error.status_code >= 500:
+            return CreditRiskPrediction(
+                status="error", message="Prediction execution failed."
+            )
+        return CreditRiskPrediction(
+            status="invalid", message="The prediction request was rejected."
+        )
+    except APIUnavailableError as error:
         _raise_data_error(error)
+    except APIClientError as error:
+        raise MalformedProviderResponseError(
+            "The prediction API returned an invalid response."
+        ) from error
     return normalize_prediction_response(response)
 
 

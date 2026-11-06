@@ -39,8 +39,13 @@ _ALLOWED_TOOLS: dict[AgentTool, Callable[..., dict[str, Any]]] = {
     "get_dashboard_metrics": tools.get_dashboard_metrics,
     "get_model_comparison": tools.get_model_comparison,
     "get_prediction": tools.get_prediction,
+    "explain_prediction": tools.explain_prediction,
 }
-_APPLICATION_TOOLS = {"get_application_details", "get_prediction"}
+_APPLICATION_TOOLS = {
+    "get_application_details",
+    "get_prediction",
+    "explain_prediction",
+}
 
 
 class AgentConfigurationError(RuntimeError):
@@ -57,6 +62,7 @@ class RouteDecision(BaseModel):
         "get_dashboard_metrics",
         "get_model_comparison",
         "get_prediction",
+        "explain_prediction",
         "general",
         "unsupported",
     ]
@@ -279,7 +285,15 @@ def build_agent_graph(
             }
 
         result_status = result.get("status")
-        if result_status in {"unavailable", "invalid"}:
+        if result_status in {
+            "invalid",
+            "not_found",
+            "no_prediction",
+            "model_unavailable",
+            "explanation_unavailable",
+            "unavailable",
+            "error",
+        }:
             status = result_status
         elif result_status == "invalid_id":
             status = "invalid_input"
@@ -287,6 +301,8 @@ def build_agent_graph(
             status = "unavailable"
         elif result_status == "partial":
             status = "partial"
+        elif result_status == "success":
+            status = "success"
         elif result_status in {"found", "available"}:
             status = "answered"
         else:
@@ -304,8 +320,43 @@ def build_agent_graph(
                 "final_response": answer,
                 "messages": _append_assistant_message(state, answer),
             }
-        if status == "invalid_input":
+        if status in {"invalid_input", "invalid"}:
             answer = error or "The request contains invalid input."
+            return {
+                "final_response": answer,
+                "messages": _append_assistant_message(state, answer),
+            }
+        if (
+            state.get("selected_tool") == "get_model_comparison"
+            and tool_result is not None
+            and tool_result.get("comparison_available") is False
+        ):
+            note = tool_result.get("comparison_note")
+            answer = (
+                "A direct model comparison is not justified. "
+                f"{note if isinstance(note, str) and note else 'Evaluation protocol comparability is unavailable.'}\n"
+                f"{json.dumps(tool_result, ensure_ascii=False, indent=2, allow_nan=False)}"
+            )
+            return {
+                "final_response": answer,
+                "messages": _append_assistant_message(state, answer),
+            }
+        if status in {"not_found", "no_prediction", "model_unavailable"}:
+            messages = {
+                "not_found": "No application was found for that ID.",
+                "no_prediction": "No prediction is available for that application.",
+                "model_unavailable": "The prediction model is unavailable.",
+            }
+            answer = messages[status]
+            return {
+                "final_response": answer,
+                "messages": _append_assistant_message(state, answer),
+            }
+        if status == "explanation_unavailable":
+            answer = (
+                "The prediction is available, but its SHAP explanation is "
+                "unavailable. No feature contributions can be reported."
+            )
             return {
                 "final_response": answer,
                 "messages": _append_assistant_message(state, answer),
@@ -400,7 +451,7 @@ def build_agent_graph(
             }
 
         return {
-            "status": "answered",
+            "status": "success" if status == "success" else "answered",
             "final_response": answer,
             "messages": _append_assistant_message(state, answer),
         }

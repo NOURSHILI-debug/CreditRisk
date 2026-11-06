@@ -7,6 +7,7 @@ AgentTool = Literal[
     "get_dashboard_metrics",
     "get_model_comparison",
     "get_prediction",
+    "explain_prediction",
 ]
 
 AgentStatus = Literal[
@@ -16,6 +17,12 @@ AgentStatus = Literal[
     "invalid_input",
     "unsupported_request",
     "partial",
+    "success",
+    "invalid",
+    "not_found",
+    "no_prediction",
+    "model_unavailable",
+    "explanation_unavailable",
     "unavailable",
     "error",
 ]

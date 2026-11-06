@@ -15,10 +15,13 @@ from xgboost import XGBClassifier
 from api.config import Settings
 from api.features import FeatureValidator
 from api.main import create_app
+from agent import tools
 from api.repository import (
     ApplicationRepository,
     DuplicateApplicationIdError,
 )
+from dashboard import data_access
+from dashboard.api_client import APIClient
 from dashboard.data_access import normalize_prediction_response
 from processing.preprocessing import build_preprocessor
 
@@ -117,7 +120,21 @@ def tiny_artifacts(tmp_path: Path) -> tuple[Settings, pd.DataFrame]:
             {
                 "model_name": "XGBoost",
                 "model_version": "tiny-test",
+                "target": {
+                    "name": "TARGET",
+                    "positive_class": 1,
+                    "positive_label": "repayment difficulty",
+                    "probability_semantics": "P(TARGET=1)",
+                },
                 "threshold": 0.5,
+                "split_protocol": {"method": "test fixture"},
+                "metric_definitions": {
+                    "roc_auc": "Area under ROC curve.",
+                    "pr_auc": "Average precision.",
+                    "precision": "Precision at threshold.",
+                    "recall": "Recall at threshold.",
+                    "f1": "F1 at threshold.",
+                },
                 "metrics": {"test": {"roc_auc": 0.9}},
             }
         ),
@@ -185,6 +202,24 @@ def test_prediction_by_application_id_and_explanation(tiny_client: TestClient) -
     assert payload["explanation"] is None
     assert "model_hash" not in payload
 
+    retrieved = tiny_client.get("/applications/2/prediction")
+    assert retrieved.status_code == 200
+    retrieved_payload = retrieved.json()
+    assert retrieved_payload["status"] == "available"
+    assert retrieved_payload["application_id"] == 2
+    assert retrieved_payload["probability"] == payload["probability"]
+    assert retrieved_payload["explanation"] is None
+
+    explained_retrieval = tiny_client.get(
+        "/applications/2/prediction",
+        params={"include_explanation": True},
+    )
+    assert explained_retrieval.status_code == 200
+    explained_retrieval_payload = explained_retrieval.json()
+    assert explained_retrieval_payload["status"] == "available"
+    assert explained_retrieval_payload["probability"] == payload["probability"]
+    assert explained_retrieval_payload["explanation"]["method"] == "tree_shap"
+
     explained = tiny_client.post(
         "/predict",
         params={"include_explanation": True},
@@ -209,6 +244,70 @@ def test_prediction_by_application_id_and_explanation(tiny_client: TestClient) -
         rel_tol=0.0,
         abs_tol=1e-6,
     )
+
+
+def test_explanation_unavailable_does_not_hide_prediction(
+    tiny_client: TestClient,
+) -> None:
+    state = tiny_client.app.state.container
+    state.explainer = None
+
+    response = tiny_client.get(
+        "/applications/2/prediction",
+        params={"include_explanation": True},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "available"
+    assert payload["probability"] is not None
+    assert payload["explanation"] is None
+    assert "Explanation unavailable" in payload["message"]
+
+
+def test_explanation_execution_failure_does_not_hide_prediction(
+    tiny_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    explainer = tiny_client.app.state.container.explainer
+    assert explainer is not None
+
+    def fail_shap(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("private SHAP failure detail")
+
+    monkeypatch.setattr(explainer, "compute_shap_batch", fail_shap)
+    response = tiny_client.get(
+        "/applications/2/prediction",
+        params={"include_explanation": True},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "available"
+    assert payload["probability"] is not None
+    assert payload["explanation"] is None
+    assert "Explanation unavailable" in payload["message"]
+    assert "private SHAP failure detail" not in payload["message"]
+
+
+def test_agent_model_comparison_uses_real_api_evaluation_artifact(
+    tiny_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = APIClient("http://testserver", client=tiny_client)
+    monkeypatch.setattr(data_access, "_client", lambda: client)
+
+    result = tools.get_model_comparison()
+
+    assert result["status"] == "partial"
+    assert result["models"]["XGBoost"]["ROC-AUC"] == 0.9
+    assert result["models"]["LSTM"]["ROC-AUC"] is None
+    assert result["evaluations"][0]["dataset_split"] == "test"
+    assert result["evaluations"][0]["model_version"] == "tiny-test"
+    assert result["evaluations"][1]["evaluation_status"] == "unavailable"
+    assert result["comparison_available"] is False
+    assert "LSTM evaluation results are not provided" in result["comparison_note"]
+    json.dumps(result, allow_nan=False)
 
 
 def test_prediction_by_features_and_unknown_category(
