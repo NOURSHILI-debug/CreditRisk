@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from types import ModuleType
 
 import numpy as np
 import pandas as pd
@@ -773,10 +775,13 @@ def test_explain_prediction_handles_data_access_and_execution_errors(
 
 
 class FakeStructuredRouter:
-    def __init__(self, tool: str) -> None:
+    def __init__(self, tool: str, captured: list[object] | None = None) -> None:
         self.tool = tool
+        self.captured = captured
 
-    def invoke(self, _: object) -> dict[str, str]:
+    def invoke(self, messages: object) -> dict[str, str]:
+        if self.captured is not None:
+            self.captured.append(messages)
         return {"tool": self.tool}
 
 
@@ -785,12 +790,15 @@ class FakeChatModel:
         self.tool = tool
         self.response = response
         self.response_calls = 0
+        self.route_inputs: list[object] = []
+        self.response_inputs: list[object] = []
 
-    def with_structured_output(self, _: object) -> FakeStructuredRouter:
-        return FakeStructuredRouter(self.tool)
+    def with_structured_output(self, _: object, **_kwargs: object) -> FakeStructuredRouter:
+        return FakeStructuredRouter(self.tool, self.route_inputs)
 
-    def invoke(self, _: object) -> object:
+    def invoke(self, messages: object) -> object:
         self.response_calls += 1
+        self.response_inputs.append(messages)
         return {"content": self.response}
 
 
@@ -898,7 +906,9 @@ def test_graph_executes_prediction_tool_and_preserves_its_result(
     assert state["status"] == expected_status
     assert state["tool_result"] == prediction
     assert state["selected_tool"] == "get_prediction"
-    assert model.response_calls == 1
+    assert model.response_calls == 0
+    assert "0.25" in state["final_response"]
+    assert "1001" not in state["final_response"]
 
 
 @pytest.mark.parametrize(
@@ -1252,6 +1262,375 @@ def test_llm_requires_credentials_only_when_not_injected(
         model=FakeChatModel("general"),  # type: ignore[arg-type]
     )
     assert state["status"] == "answered"
+
+
+def test_ollama_provider_initializes_without_openai_key_and_uses_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+
+    captured: dict[str, object] = {}
+
+    class FakeOllama:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    module = ModuleType("langchain_ollama")
+    module.ChatOllama = FakeOllama  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "langchain_ollama", module)
+    monkeypatch.setenv("AGENT_LLM_PROVIDER", "ollama")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENT_LLM_MODEL", raising=False)
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+
+    model = graph._create_chat_model()
+
+    assert isinstance(model, FakeOllama)
+    assert captured == {
+        "model": "llama3.1:8b",
+        "base_url": "http://localhost:11434",
+        "temperature": 0,
+    }
+
+
+def test_ollama_provider_accepts_model_and_base_url_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+
+    captured: dict[str, object] = {}
+
+    class FakeOllama:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    module = ModuleType("langchain_ollama")
+    module.ChatOllama = FakeOllama  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "langchain_ollama", module)
+    monkeypatch.setenv("AGENT_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("AGENT_LLM_MODEL", "llama3.1:8b-instruct-q4_K_M")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11435")
+
+    graph._create_chat_model()
+
+    assert captured["model"] == "llama3.1:8b-instruct-q4_K_M"
+    assert captured["base_url"] == "http://127.0.0.1:11435"
+    assert captured["temperature"] == 0
+
+
+@pytest.mark.parametrize(
+    ("url", "allow_remote", "expected"),
+    [
+        ("http://localhost:11434", "false", "http://localhost:11434"),
+        ("http://127.0.0.1:11435/", "false", "http://127.0.0.1:11435"),
+        ("http://[::1]:11434", "false", "http://[::1]:11434"),
+        ("https://ollama.example.test", "true", "https://ollama.example.test"),
+    ],
+)
+def test_ollama_endpoint_policy_accepts_local_and_explicit_https_remote(
+    url: str, allow_remote: str, expected: str
+) -> None:
+    from agent.graph import _validated_ollama_base_url
+
+    assert _validated_ollama_base_url(url, allow_remote=allow_remote) == expected
+
+
+@pytest.mark.parametrize(
+    ("url", "allow_remote"),
+    [
+        ("ollama.example.test", "false"),
+        ("https://ollama.example.test", "false"),
+        ("http://ollama.example.test", "true"),
+        ("ftp://localhost:11434", "true"),
+        ("http://localhost:99999", "false"),
+        ("http://localhost:abc", "false"),
+        ("http://user:password@localhost:11434", "false"),
+        ("http://localhost:11434/api", "false"),
+        ("http://localhost:11434?token=secret", "false"),
+        ("http://localhost.example.test:11434", "false"),
+        ("https://ollama..example.test", "true"),
+        ("https://ollama.example.test:", "true"),
+    ],
+)
+def test_ollama_endpoint_policy_rejects_unsafe_or_malformed_urls(
+    url: str, allow_remote: str
+) -> None:
+    from agent.graph import AgentConfigurationError, _validated_ollama_base_url
+
+    with pytest.raises(AgentConfigurationError):
+        _validated_ollama_base_url(url, allow_remote=allow_remote)
+
+
+def test_ollama_remote_setting_rejects_unrecognized_values() -> None:
+    from agent.graph import AgentConfigurationError, _validated_ollama_base_url
+
+    with pytest.raises(AgentConfigurationError, match="OLLAMA_ALLOW_REMOTE"):
+        _validated_ollama_base_url("http://localhost:11434", allow_remote="yes")
+
+
+@pytest.mark.parametrize(
+    ("tool", "question", "result", "visible"),
+    [
+        (
+            "get_application_details",
+            "What is AMT_CREDIT for application ID 1001?",
+            {
+                "status": "found",
+                "application_id": 1001,
+                "fields": {
+                    "SK_ID_CURR": 1001,
+                    "AMT_CREDIT": 45000,
+                    "AMT_INCOME_TOTAL": 90000,
+                    "DAYS_BIRTH": -12000,
+                },
+            },
+            '"value": 45000',
+        ),
+        (
+            "get_prediction",
+            "Get the prediction for application ID 1001.",
+            {
+                "status": "available",
+                "application_id": 1001,
+                "probability": 0.37,
+                "risk_level": "MEDIUM",
+            },
+            '"probability": 0.37',
+        ),
+        (
+            "explain_prediction",
+            "Explain the prediction for application ID 1001.",
+            {
+                "status": "available",
+                "application_id": 1001,
+                "top_features": [{"feature": "AMT_CREDIT", "shap_value": 0.2}],
+            },
+            '"feature": "AMT_CREDIT"',
+        ),
+    ],
+)
+@pytest.mark.parametrize("provider", ["ollama", "openai"])
+def test_applicant_results_are_minimized_and_never_passed_to_response_llm(
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+    question: str,
+    result: dict[str, object],
+    visible: str,
+    provider: str,
+) -> None:
+    from agent import graph
+
+    monkeypatch.setenv("AGENT_LLM_PROVIDER", provider)
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, tool, lambda **_: result)
+    model = FakeChatModel(tool)
+
+    state = graph.run_agent(question, model=model)  # type: ignore[arg-type]
+
+    assert state["tool_result"] == result
+    assert visible in state["final_response"]
+    assert "1001" not in str(model.route_inputs)
+    assert "1001" not in str(model.response_inputs)
+    assert "90000" not in state["final_response"]
+    assert "-12000" not in state["final_response"]
+    assert model.response_calls == 0
+
+
+def test_general_application_lookup_does_not_return_the_full_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+
+    result = {
+        "status": "found",
+        "application_id": 1001,
+        "fields": {"AMT_CREDIT": 45000, "AMT_INCOME_TOTAL": 90000},
+    }
+    monkeypatch.setitem(
+        graph._ALLOWED_TOOLS, "get_application_details", lambda **_: result
+    )
+    model = FakeChatModel("get_application_details")
+
+    state = graph.run_agent(
+        "Show application details for application ID 1001.", model=model  # type: ignore[arg-type]
+    )
+
+    assert '"status": "not_authorized"' in state["final_response"]
+    assert "45000" not in state["final_response"]
+    assert "90000" not in state["final_response"]
+    assert model.response_calls == 0
+
+
+def test_all_six_agent_tools_remain_registered_and_allowlisted() -> None:
+    from agent import graph
+
+    assert set(graph._ALLOWED_TOOLS) == {
+        "get_application_details",
+        "get_dashboard_metrics",
+        "get_model_comparison",
+        "get_prediction",
+        "explain_prediction",
+        "generate_report",
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"tool": "delete_all_records"},
+        {"tool": "get_dashboard_metrics", "tools": ["get_application_details"]},
+        {"tool": 123},
+    ],
+)
+def test_malformed_or_unauthorized_routing_fails_without_fallback(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, object]
+) -> None:
+    from agent import graph
+
+    class StructuredRouter:
+        def invoke(self, _: object) -> dict[str, object]:
+            return payload
+
+    class MalformedModel:
+        def with_structured_output(self, _: object, **_kwargs: object) -> StructuredRouter:
+            return StructuredRouter()
+
+        def invoke(self, _: object) -> object:
+            raise AssertionError("Response generation must not run after bad routing.")
+
+    called: list[str] = []
+    for name in graph._ALLOWED_TOOLS:
+        monkeypatch.setitem(
+            graph._ALLOWED_TOOLS,
+            name,
+            lambda **_: called.append(name) or {"status": "available"},
+        )
+
+    result = graph.run_agent(
+        "Show dashboard metrics.", model=MalformedModel()  # type: ignore[arg-type]
+    )
+
+    assert result["status"] == "error"
+    assert result["selected_tool"] is None
+    assert called == []
+
+
+def test_allowlist_rejects_a_tool_removed_from_registry_without_alternative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+
+    calls: list[str] = []
+    monkeypatch.delitem(graph._ALLOWED_TOOLS, "get_dashboard_metrics")
+    monkeypatch.setitem(
+        graph._ALLOWED_TOOLS,
+        "get_application_details",
+        lambda **_: calls.append("application") or {"status": "found", "fields": {}},
+    )
+
+    result = graph.run_agent(
+        "Show dashboard metrics.",
+        model=FakeChatModel("get_dashboard_metrics"),  # type: ignore[arg-type]
+    )
+
+    assert result["status"] == "needs_clarification"
+    assert result["selected_tool"] is None
+    assert calls == []
+
+
+def test_ollama_route_uses_json_schema_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+
+    class OllamaRouter:
+        def __init__(self) -> None:
+            self.schema: object | None = None
+            self.options: dict[str, object] = {}
+
+        def with_structured_output(
+            self, schema: object, **kwargs: object
+        ) -> FakeStructuredRouter:
+            self.schema = schema
+            self.options = kwargs
+            return FakeStructuredRouter("get_dashboard_metrics")
+
+    model = OllamaRouter()
+    monkeypatch.setenv("AGENT_LLM_PROVIDER", "ollama")
+
+    decision = graph._decision_from_model(model, "Show dashboard metrics.")  # type: ignore[arg-type]
+
+    assert decision.tool == "get_dashboard_metrics"
+    assert model.schema is graph.RouteDecision
+    assert model.options == {"method": "json_schema"}
+
+
+def test_route_decision_normalizes_redundant_general_marker() -> None:
+    from agent.graph import RouteDecision
+
+    decision = RouteDecision(
+        tool="general", tools=["get_dashboard_metrics"]
+    )
+
+    assert decision.tool is None
+    assert decision.tools == ["get_dashboard_metrics"]
+
+
+def test_route_decision_normalizes_only_an_exact_duplicated_tool() -> None:
+    from agent.graph import RouteDecision
+
+    decision = RouteDecision(
+        tool="get_application_details", tools=["get_application_details"]
+    )
+
+    assert decision.tool == "get_application_details"
+    assert decision.tools == []
+
+
+def test_unsupported_route_cannot_include_tools() -> None:
+    from agent.graph import RouteDecision
+
+    with pytest.raises(ValueError, match="Unsupported routes cannot select tools"):
+        RouteDecision(tool="unsupported", tools=["get_dashboard_metrics"])
+
+
+def test_openai_provider_remains_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+
+    captured: dict[str, object] = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    module = ModuleType("langchain_openai")
+    module.ChatOpenAI = FakeOpenAI  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "langchain_openai", module)
+    monkeypatch.setenv("AGENT_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("AGENT_LLM_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    model = graph._create_chat_model()
+
+    assert isinstance(model, FakeOpenAI)
+    assert captured == {
+        "model": "gpt-4o-mini",
+        "api_key": "test-key",
+        "temperature": 0,
+    }
+
+
+@pytest.mark.parametrize("provider", ["", "gemini", "unknown"])
+def test_unsupported_llm_provider_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, provider: str
+) -> None:
+    from agent.graph import AgentConfigurationError, _create_chat_model
+
+    monkeypatch.setenv("AGENT_LLM_PROVIDER", provider)
+    with pytest.raises(AgentConfigurationError, match="supported providers"):
+        _create_chat_model()
 
 
 def test_credit_decision_request_is_refused_without_tool_execution() -> None:
