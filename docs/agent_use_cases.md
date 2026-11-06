@@ -61,11 +61,12 @@ lookup and prediction display already use the data-access layer.
 
 The single-agent orchestration is implemented in `src/agent/graph.py` with
 typed state in `src/agent/state.py` and routing/grounding instructions in
-`src/agent/prompts.py`. `src/agent/report_generator.py` remains an empty
-placeholder. `src/dashboard/components/prediction_view.py` does not currently
+`src/agent/prompts.py`. Aggregate reporting is implemented in
+`src/agent/report_generator.py` and exposed through an allowlisted tool.
+`src/dashboard/components/prediction_view.py` does not currently
 define a prediction interface.
 
-The four implemented wrappers in `src/agent/tools.py` return JSON-compatible
+The six implemented wrappers in `src/agent/tools.py` return JSON-compatible
 dictionaries and use `source_mode` (`mock` or `configured`) to identify
 provenance. Their detailed statuses and output shapes are:
 
@@ -267,22 +268,22 @@ a documented result status or a raised, handled tool error.
 - **Input:** `period: str`, identifying the requested scope. The tool must
   validate that the source can actually select that period; a label supplied
   by the user is not proof that data was filtered.
-- **Source/mapping:** Compose only outputs from `get_dashboard_metrics()` and
-  `get_model_comparison()` (and other validated tools added later). No report
-  generator currently exists.
-- **Proposed output:** `{requested_period, data_coverage, source_mode,
-  application_metrics, model_comparison, limitations, summary}`. Each section
-  may be explicitly unavailable; `summary` must be grounded in the returned
-  sections.
-- **Validation/errors:** If the source has no relevant timestamps or period
-  filter, mark the period unsupported and offer an all-available-data summary
-  only if the user accepts that scope. Do not claim trends, changes over time,
-  or period comparisons without date-scoped records or evaluation artifacts.
-  Preserve partial results and their missing sections; do not fill gaps.
-- **Status:** Not implementable as a period report with current APIs. Whole
-  dataset summaries can be composed after the report wrapper is implemented;
-  period filtering and trend claims depend on timestamped, filterable source
-  data and evaluation coverage from Person 1.
+- **Source/mapping:** Implemented through shared `dashboard.data_access`
+  application overview/count, saved split prediction summary, and normalized
+  model evaluation interfaces.
+- **Output:** Structured JSON-compatible report with executive summary,
+  application statistics, prediction statistics/provenance, model metrics and
+  comparison status, data-quality limitations, and Markdown.
+- **Periods:** Accepts `7d`, `30d`, `90d`, and `all`. Current sources do not
+  support compatible event timestamps or period filters, so the requested
+  period is recorded while actual coverage is explicitly reported as a current
+  application snapshot and named historical split(s). No rolling-window or
+  lifetime-history claim is made.
+- **Limitations:** TARGET counts are unavailable through the applicant API's
+  field allowlist, average predicted probability is absent from aggregate
+  prediction summaries, and fresh inference is not counted as saved history.
+  Partial source failures preserve other sections; unavailable metrics remain
+  null and Markdown is generated from the structured report.
 
 ## 6. Response, safety, and unavailable-data rules
 
@@ -321,37 +322,50 @@ planning.
 
 A single agent and a small explicit graph are sufficient:
 
-1. Receive a user question and identify the requested operation.
-2. Validate required arguments and reject unsupported scopes.
-3. Select from the four allowlisted tools and execute only the necessary call.
-4. Validate tool status/payloads, retaining provenance and unavailable fields.
-5. Produce a concise response grounded in those outputs and enforce the
+1. Receive a user question and classify its intent with structured output.
+2. Resolve a referenced applicant only from a new validated ID or explicit
+   caller-owned session context.
+3. Validate required arguments and reject unsupported scopes.
+4. Select one or more allowlisted tools and execute each selected tool once.
+5. Validate each result and status, preserving partial success and provenance.
+6. Produce a concise response grounded in those outputs and enforce the
    response rules in Section 6.
 
 This workflow is implemented in `src/agent/graph.py` as
-`build_agent_graph(model=None)` and `run_agent(question, *, model=None)`.
-`AgentState` in `src/agent/state.py` stores the current question, only the
-current user/assistant messages, selected tool and arguments, current tool
-result, response, and status/error. It does not retain multi-turn history.
+`build_agent_graph(model=None)` and
+`run_agent(question, *, model=None, context=None)`. `AgentState` in
+`src/agent/state.py` holds the current turn, selected tools, individual tool
+results/statuses, and response. `AgentConversationContext` contains only the
+current application ID and previous intent; it stores no conversation text,
+applicant records, or tool results.
 
-The router uses a constrained structured response that can select only one of
-the four tools, `general`, or `unsupported`. It cannot supply tool arguments.
-Application IDs are extracted from the user's text and validated as positive
-integers before execution. If an application-specific request omits an ID,
-the workflow asks for clarification and does not call a tool. Invalid or
-ambiguous IDs are rejected. Only the selected tool is executed; dynamic tool
-names, arbitrary SQL, filesystem, shell, and API access are not exposed.
+The router uses a constrained structured response that selects an allowlisted
+tool list, general response, unsupported request, or clarification. It cannot
+supply tool arguments. Application IDs are extracted from user text and
+validated as positive integers before execution. Follow-up references such as
+"explain why" can reuse the current ID only when the caller passes the same
+session context and the request is a clear follow-up. A new explicit ID
+replaces it. Without an unambiguous ID/context, the workflow asks for
+clarification. Duplicate tool selections are removed and every selected
+function is looked up in `_ALLOWED_TOOLS`; arbitrary code, SQL, filesystem,
+shell, and direct API access are not exposed.
 
 Unavailable, invalid, and partial tool results are communicated
 deterministically without asking the LLM to fill gaps. Tool exceptions are
-logged and returned as safe error states. Other tool results and general
-platform questions are answered with a grounded response prompt; mock-backed
-tool answers receive an explicit mock/demo label. The initial workflow uses a
-fresh single-turn state and
-doesn't persist conversation history.
+logged and returned as safe per-tool error states. Multi-tool results retain
+individual statuses; mixed success/failure is reported as partial success.
+Prediction/explanation results are checked against the same application ID.
+Model comparisons without verified comparable evaluation protocol are
+presented deterministically without an LLM-generated ranking. Other tool
+results and general platform questions use a grounded response prompt;
+mock-backed tool answers receive an explicit mock/demo label.
 
-No chat interface is implemented. No LangGraph checkpoint store or long-term
-conversation memory is configured.
+Conversation context is optional and caller-owned. A chat host must create one
+`AgentConversationContext` per conversation and pass it to each `run_agent`
+call; separate context objects are isolated. If omitted, each call is
+stateless. No checkpoint store, external database, cross-process persistence,
+or chat interface is implemented. Only the active application ID and prior
+intent survive in the caller's context; tool results are always fetched anew.
 
 Multiple agents are unnecessary for the first version: these use cases share
 one data-access boundary, have a small fixed tool set, and require consistent
@@ -402,7 +416,7 @@ Retrieved results + provenance/status
 Grounded agent response
 ```
 
-Only the orchestration layer, prompts, typed state, and four tools are
+Only the orchestration layer, prompts, typed state, and six tools are
 implemented. The Streamlit chat interface remains future work. The agent must
 not independently read datasets, model artifacts, or storage, and must not
 duplicate dashboard retrieval or metric logic. Any new source should be
@@ -438,12 +452,12 @@ Before real-data use, Person 1 should agree and provide:
   for real outputs, the relevant model/data version where available.
 
 Person 2 owns the implemented wrappers and LangGraph workflow, and remains
-responsible for their maintenance, a future chat UI, and report generation.
+responsible for their maintenance and a future chat UI.
 The agent should integrate only through agreed interfaces, not ML internals.
 
 ## 10. Explicit out of scope
 
-- Chatbot UI, long-term conversation memory, and report-generation tools.
+- Chatbot UI and long-term conversation memory.
 - Causal interpretation of SHAP contributions or use of explanations as
   lending recommendations.
 - Training, modifying, or deploying XGBoost or LSTM.

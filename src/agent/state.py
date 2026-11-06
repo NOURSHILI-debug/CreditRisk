@@ -9,6 +9,7 @@ AgentTool = Literal[
     "get_model_comparison",
     "get_prediction",
     "explain_prediction",
+    "generate_report",
 ]
 
 AgentStatus = Literal[
