@@ -174,6 +174,13 @@ def test_model_comparison_returns_only_normalized_actual_results(
     assert result["models"]["XGBoost"]["ROC-AUC"] == 0.81
     assert result["models"]["XGBoost"]["Recall"] is None
     assert result["statuses"]["LSTM"] == "Not available"
+    assert result["comparison_available"] is False
+    assert result["evaluations"][1]["evaluation_status"] == "unavailable"
+    assert result["evaluations"][1]["metrics"] is None
+    assert "LSTM evaluation results are not provided" in result["comparison_note"]
+    assert "not available in the API" in (
+        result["evaluations"][1]["unavailable_reason"]
+    )
     _assert_json(result)
 
 
@@ -197,6 +204,55 @@ def test_model_comparison_returns_available_complete_metrics(
     assert result["statuses"] == {"XGBoost": "Available", "LSTM": "Available"}
     assert result["models"]["XGBoost"]["ROC-AUC"] == 0.1
     assert result["models"]["LSTM"]["F1-score"] == 0.5
+    assert result["comparison_available"] is False
+    assert "cannot be confirmed" in result["comparison_note"]
+    _assert_json(result)
+
+
+def test_model_comparison_enables_comparison_only_with_shared_protocol_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = pd.DataFrame(
+        [
+            {"model": model, "metric": metric, "value": index / 10}
+            for model in ("XGBoost", "LSTM")
+            for index, metric in enumerate(data_access.MODEL_METRICS, start=1)
+        ]
+    )
+    rows.attrs["split"] = "test"
+    rows.attrs["provenance"] = {
+        "target": {
+            "name": "TARGET",
+            "positive_class": 1,
+            "positive_label": "repayment difficulty",
+            "probability_semantics": "P(TARGET=1)",
+        },
+        "metric_definitions": {
+            "roc_auc": "ROC-AUC",
+            "pr_auc": "PR-AUC",
+            "precision": "Precision at threshold.",
+            "recall": "Recall at threshold.",
+            "f1": "F1 at threshold.",
+        },
+        "threshold": 0.5,
+        "n_samples": 100,
+        "class_counts": {"0": 80, "1": 20},
+        "split_protocol": {"method": "stratified train/test"},
+        "source": "evaluation_results.json",
+    }
+    monkeypatch.setattr(
+        tools.data_access, "get_model_evaluation_results", lambda: rows
+    )
+
+    result = tools.get_model_comparison()
+
+    assert result["comparison_available"] is True
+    assert "same reported split" in result["comparison_note"]
+    assert [item["dataset_split"] for item in result["evaluations"]] == [
+        "test",
+        "test",
+    ]
+    assert result["evaluation_metadata"]["target"]["positive_class"] == 1
     _assert_json(result)
 
 
@@ -217,6 +273,11 @@ def test_model_comparison_reports_missing_evaluation_results(
         "XGBoost": "Not available",
         "LSTM": "Not available",
     }
+    assert result["comparison_available"] is False
+    assert all(
+        item["evaluation_status"] == "unavailable"
+        for item in result["evaluations"]
+    )
     assert all(
         value is None
         for metrics in result["models"].values()
@@ -246,7 +307,26 @@ def test_model_comparison_reports_malformed_results_and_unavailable_source(
     )
     result = tools.get_model_comparison()
     assert result["status"] == "unavailable"
-    assert result["message"] == "evaluation source offline"
+    assert result["message"] == "Evaluation results are unavailable from the API."
+    assert "evaluation source offline" not in str(result)
+    _assert_json(result)
+
+
+def test_model_comparison_handles_unexpected_execution_errors_without_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail() -> None:
+        raise RuntimeError("private path and response payload")
+
+    monkeypatch.setattr(
+        tools.data_access, "get_model_evaluation_results", fail
+    )
+
+    result = tools.get_model_comparison()
+
+    assert result["status"] == "error"
+    assert result["comparison_available"] is False
+    assert "private path" not in str(result)
     _assert_json(result)
 
 
@@ -460,6 +540,238 @@ def test_prediction_reports_data_access_errors_explicitly(
     _assert_json(result)
 
 
+def test_explain_prediction_returns_valid_minimized_shap_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[int, bool]] = []
+    explanation = {
+        "method": "tree_shap",
+        "output_space": "log_odds",
+        "application_id": 1001,
+        "base_value": 0.12,
+        "base_probability": 0.53,
+        "prediction_margin": 1.26,
+        "contribution_sum": 1.14,
+        "probability": 0.78,
+        "summary": "Risk-increasing and decreasing features.",
+        "top_features": [
+            {
+                "feature": "EXT_SOURCE_2",
+                "raw_feature": "EXT_SOURCE_2",
+                "transformed_feature": "num__EXT_SOURCE_2",
+                "value": 0.2,
+                "raw_value": 0.2,
+                "shap_value": 0.42,
+                "effect": "increases_risk",
+            },
+            {
+                "feature": "AMT_CREDIT",
+                "raw_feature": "AMT_CREDIT",
+                "transformed_feature": "num__AMT_CREDIT",
+                "value": 90000.0,
+                "raw_value": 90000.0,
+                "shap_value": -0.18,
+                "effect": "decreases_risk",
+            },
+        ],
+    }
+
+    def prediction(
+        application_id: int, *, include_explanation: bool
+    ) -> data_access.CreditRiskPrediction:
+        calls.append((application_id, include_explanation))
+        return data_access.CreditRiskPrediction(
+            status="available",
+            probability=0.78,
+            risk_level="HIGH",
+            model_name="XGBoost",
+            model_version="actual-v2",
+            prediction_timestamp="2026-11-06T10:00:00Z",
+            explanation=explanation,
+        )
+
+    monkeypatch.setattr(
+        tools.data_access, "get_credit_risk_prediction", prediction
+    )
+
+    result = tools.explain_prediction(" 1001 ")
+
+    assert calls == [(1001, True)]
+    assert result == {
+        "status": "available",
+        "application_id": 1001,
+        "prediction_probability": 0.78,
+        "risk_level": "HIGH",
+        "model_name": "XGBoost",
+        "model_version": "actual-v2",
+        "explanation_method": "tree_shap",
+        "output_space": "log_odds",
+        "base_value": 0.12,
+        "base_probability": 0.53,
+        "prediction_margin": 1.26,
+        "contribution_sum": 1.14,
+        "top_features": [
+            {
+                "feature": "EXT_SOURCE_2",
+                "shap_value": 0.42,
+                "effect": "increases_risk",
+            },
+            {
+                "feature": "AMT_CREDIT",
+                "shap_value": -0.18,
+                "effect": "decreases_risk",
+            },
+        ],
+        "message": "Explanation retrieved successfully.",
+        "source_mode": "configured",
+    }
+    assert "raw_value" not in str(result)
+    assert "transformed_feature" not in str(result)
+    assert "application_id" not in result["top_features"][0]
+    _assert_json(result)
+
+
+@pytest.mark.parametrize(
+    "explanation",
+    [
+        None,
+        {},
+        {"method": "tree_shap", "output_space": "log_odds"},
+        {
+            "method": "tree_shap",
+            "output_space": "log_odds",
+            "top_features": [{"feature": "AMT_CREDIT", "shap_value": float("nan"), "effect": "increases_risk"}],
+        },
+        {
+            "method": "tree_shap",
+            "output_space": "log_odds",
+            "top_features": [{"feature": "AMT_CREDIT", "shap_value": 0.2, "effect": "decreases_risk"}],
+        },
+        {
+            "method": "tree_shap",
+            "output_space": "log_odds",
+            "probability": 0.1,
+            "top_features": [],
+        },
+        {
+            "method": "other",
+            "output_space": "log_odds",
+            "top_features": [],
+        },
+        {
+            "method": "tree_shap",
+            "output_space": "log_odds",
+            "top_features": [{"feature": "TARGET", "shap_value": 0.2, "effect": "increases_risk"}],
+        },
+    ],
+)
+def test_explain_prediction_rejects_malformed_explanations(
+    monkeypatch: pytest.MonkeyPatch,
+    explanation: object,
+) -> None:
+    monkeypatch.setattr(
+        tools.data_access,
+        "get_credit_risk_prediction",
+        lambda *_args, **_kwargs: data_access.CreditRiskPrediction(
+            status="available",
+            probability=0.78,
+            explanation=explanation,
+        ),
+    )
+
+    result = tools.explain_prediction(1001)
+
+    expected_status = (
+        "explanation_unavailable" if explanation is None else "invalid"
+    )
+    assert result["status"] == expected_status
+    assert result["top_features"] == []
+    if expected_status == "invalid":
+        assert result["prediction_probability"] is None
+    _assert_json(result)
+
+
+def test_explain_prediction_rejects_invalid_id_without_api_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called = False
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(
+        tools.data_access, "get_credit_risk_prediction", forbidden
+    )
+
+    result = tools.explain_prediction(True)
+
+    assert result["status"] == "invalid"
+    assert result["application_id"] is None
+    assert not called
+    _assert_json(result)
+
+
+@pytest.mark.parametrize(
+    ("prediction_status", "expected_status"),
+    [
+        ("not_found", "not_found"),
+        ("no_prediction", "no_prediction"),
+        ("model_unavailable", "model_unavailable"),
+        ("unavailable", "unavailable"),
+    ],
+)
+def test_explain_prediction_preserves_prediction_unavailable_status(
+    monkeypatch: pytest.MonkeyPatch,
+    prediction_status: str,
+    expected_status: str,
+) -> None:
+    monkeypatch.setattr(
+        tools.data_access,
+        "get_credit_risk_prediction",
+        lambda *_args, **_kwargs: data_access.CreditRiskPrediction(
+            status=prediction_status,
+            model_name="XGBoost",
+            model_version="v2",
+        ),
+    )
+
+    result = tools.explain_prediction(1001)
+
+    assert result["status"] == expected_status
+    assert result["model_name"] == "XGBoost"
+    assert result["model_version"] == "v2"
+    assert result["top_features"] == []
+    assert result["prediction_probability"] is None
+    _assert_json(result)
+
+
+def test_explain_prediction_handles_data_access_and_execution_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(*_args: object, **_kwargs: object) -> None:
+        raise data_access.DataSourceUnavailableError("private connection detail")
+
+    monkeypatch.setattr(
+        tools.data_access, "get_credit_risk_prediction", unavailable
+    )
+    result = tools.explain_prediction(1001)
+    assert result["status"] == "unavailable"
+    assert "private connection detail" not in str(result)
+
+    def unexpected(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("private traceback detail")
+
+    monkeypatch.setattr(
+        tools.data_access, "get_credit_risk_prediction", unexpected
+    )
+    result = tools.explain_prediction(1001)
+    assert result["status"] == "error"
+    assert "private traceback detail" not in str(result)
+    assert result["top_features"] == []
+    _assert_json(result)
+
+
 class FakeStructuredRouter:
     def __init__(self, tool: str) -> None:
         self.tool = tool
@@ -497,6 +809,11 @@ class FakeChatModel:
             "Get the prediction for application 1001.",
             {"application_id": 1001},
         ),
+        (
+            "explain_prediction",
+            "Explain the prediction for application 1001.",
+            {"application_id": 1001},
+        ),
     ],
 )
 def test_graph_routes_to_only_the_selected_allowed_tool(
@@ -516,6 +833,18 @@ def test_graph_routes_to_only_the_selected_allowed_tool(
             return {"status": "found", "fields": {"SK_ID_CURR": 1001}}
         if tool == "get_prediction":
             return {"status": "unavailable", "message": "No prediction provider."}
+        if tool == "explain_prediction":
+            return {
+                "status": "available",
+                "application_id": 1001,
+                "top_features": [
+                    {
+                        "feature": "EXT_SOURCE_2",
+                        "shap_value": 0.42,
+                        "effect": "increases_risk",
+                    }
+                ],
+            }
         if tool == "get_model_comparison":
             return {"status": "unavailable", "message": "No evaluation results."}
         return {"status": "available", "metrics": {"total_applications": 120}}
@@ -573,18 +902,35 @@ def test_graph_executes_prediction_tool_and_preserves_its_result(
 
 
 @pytest.mark.parametrize(
-    ("tool_status", "expected_status", "answer_fragment"),
+    ("tool", "tool_status", "expected_status", "answer_fragment"),
     [
-        ("not_found", "not_found", "No application was found"),
-        ("no_prediction", "no_prediction", "No prediction is available"),
-        ("model_unavailable", "model_unavailable", "model is unavailable"),
-        ("unavailable", "unavailable", "unavailable"),
-        ("invalid", "invalid", "invalid input"),
-        ("error", "error", "couldn't safely complete"),
+        ("get_prediction", "not_found", "not_found", "No application was found"),
+        (
+            "get_prediction",
+            "no_prediction",
+            "no_prediction",
+            "No prediction is available",
+        ),
+        (
+            "get_prediction",
+            "model_unavailable",
+            "model_unavailable",
+            "model is unavailable",
+        ),
+        (
+            "explain_prediction",
+            "explanation_unavailable",
+            "explanation_unavailable",
+            "SHAP explanation is unavailable",
+        ),
+        ("get_prediction", "unavailable", "unavailable", "unavailable"),
+        ("get_prediction", "invalid", "invalid", "invalid input"),
+        ("get_prediction", "error", "error", "couldn't safely complete"),
     ],
 )
 def test_graph_preserves_prediction_failure_statuses_without_llm_fabrication(
     monkeypatch: pytest.MonkeyPatch,
+    tool: str,
     tool_status: str,
     expected_status: str,
     answer_fragment: str,
@@ -597,14 +943,15 @@ def test_graph_preserves_prediction_failure_statuses_without_llm_fabrication(
         "probability": None,
         "message": "The prediction service returned no score.",
     }
-    monkeypatch.setitem(graph._ALLOWED_TOOLS, "get_prediction", lambda **_: result)
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, tool, lambda **_: result)
     model = FakeChatModel(
-        "get_prediction",
+        tool,
         response="A fabricated answer must not be used.",
     )
 
     state = graph.run_agent(
-        "Get prediction for application 1001.", model=model  # type: ignore[arg-type]
+        "Explain prediction for application 1001.",
+        model=model,  # type: ignore[arg-type]
     )
 
     assert state["status"] == expected_status
@@ -619,6 +966,7 @@ def test_graph_preserves_prediction_failure_statuses_without_llm_fabrication(
     [
         ("get_application_details", "Show me the application details."),
         ("get_prediction", "What prediction is available?"),
+        ("explain_prediction", "Explain the prediction for this application."),
     ],
 )
 def test_graph_asks_for_missing_application_id_without_calling_tool(
@@ -645,9 +993,11 @@ def test_graph_asks_for_missing_application_id_without_calling_tool(
 
 
 @pytest.mark.parametrize("application_id", ["0", "-2", "1.5", "1e4"])
+@pytest.mark.parametrize("tool", ["get_prediction", "explain_prediction"])
 def test_graph_rejects_invalid_application_ids_before_tool_execution(
     monkeypatch: pytest.MonkeyPatch,
     application_id: str,
+    tool: str,
 ) -> None:
     from agent import graph
 
@@ -659,12 +1009,15 @@ def test_graph_rejects_invalid_application_ids_before_tool_execution(
         called = True
         raise AssertionError("Invalid application ID reached a tool.")
 
-    monkeypatch.setitem(
-        graph._ALLOWED_TOOLS, "get_prediction", forbidden_tool
+    monkeypatch.setitem(graph._ALLOWED_TOOLS, tool, forbidden_tool)
+    request = (
+        "Explain prediction"
+        if tool == "explain_prediction"
+        else "Get prediction"
     )
     state = graph.run_agent(
-        f"Get prediction for application {application_id}.",
-        model=FakeChatModel("get_prediction"),  # type: ignore[arg-type]
+        f"{request} for application {application_id}.",
+        model=FakeChatModel(tool),  # type: ignore[arg-type]
     )
 
     assert state["status"] == "invalid_input"
@@ -721,6 +1074,8 @@ def test_partial_results_do_not_let_llm_fill_missing_metrics(
                 "LSTM": {"ROC-AUC": None, "PR-AUC": None},
             },
             "statuses": {"XGBoost": "Partial", "LSTM": "Not available"},
+            "comparison_available": False,
+            "comparison_note": "Only XGBoost evaluation results are available.",
             "source_mode": "real",
         }
 
@@ -734,10 +1089,45 @@ def test_partial_results_do_not_let_llm_fill_missing_metrics(
     )
 
     assert state["status"] == "partial"
-    assert "Missing values are unavailable" in state["final_response"]
+    assert "direct model comparison is not justified" in state["final_response"]
+    assert "Only XGBoost evaluation results are available." in state["final_response"]
     assert '"PR-AUC": null' in state["final_response"]
     assert "0.99" not in state["final_response"]
     assert "0.98" not in state["final_response"]
+    assert model.response_calls == 0
+
+
+def test_graph_does_not_rank_complete_metrics_without_comparable_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import graph
+
+    model = FakeChatModel(
+        "get_model_comparison",
+        response="LSTM is the winner.",
+    )
+    result = {
+        "status": "available",
+        "models": {
+            "XGBoost": {"ROC-AUC": 0.8},
+            "LSTM": {"ROC-AUC": 0.7},
+        },
+        "comparison_available": False,
+        "comparison_note": "Evaluation protocol metadata is incomplete.",
+        "source_mode": "configured",
+    }
+    monkeypatch.setitem(
+        graph._ALLOWED_TOOLS, "get_model_comparison", lambda **_: result
+    )
+
+    state = graph.run_agent(
+        "Which model performs better?",
+        model=model,  # type: ignore[arg-type]
+    )
+
+    assert state["tool_result"] == result
+    assert "direct model comparison is not justified" in state["final_response"]
+    assert "LSTM is the winner" not in state["final_response"]
     assert model.response_calls == 0
 
 

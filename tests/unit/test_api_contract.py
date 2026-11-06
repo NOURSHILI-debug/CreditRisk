@@ -126,8 +126,21 @@ def _write_artifacts(tmp_path: Path) -> tuple[Settings, pd.DataFrame]:
                 "model_version": "tiny-test",
                 "generated_at": "2026-01-02T00:00:00+00:00",
                 "training_date": "2026-01-01T00:00:00+00:00",
+                "target": {
+                    "name": "TARGET",
+                    "positive_class": 1,
+                    "positive_label": "repayment difficulty",
+                    "probability_semantics": "P(TARGET=1)",
+                },
                 "threshold": 0.5,
                 "split_protocol": {"method": "test"},
+                "metric_definitions": {
+                    "roc_auc": "Area under ROC curve.",
+                    "pr_auc": "Average precision.",
+                    "precision": "Precision at threshold.",
+                    "recall": "Recall at threshold.",
+                    "f1": "F1 at threshold.",
+                },
                 "metrics": {
                     "validation": {
                         "n_samples": 2,
@@ -586,6 +599,19 @@ def test_explanation_does_not_change_probability(client: TestClient) -> None:
     assert explained["probability"] == plain["probability"]
     if explained["explanation"] is not None:
         assert explained["explanation"]["probability"] == plain["probability"]
+
+
+def test_evaluation_endpoint_preserves_target_and_metric_protocol_metadata(
+    client: TestClient,
+) -> None:
+    response = client.get("/model/evaluation", params={"split": "test"})
+
+    assert response.status_code == 200
+    provenance = response.json()["provenance"]
+    assert provenance["target"]["positive_class"] == 1
+    assert provenance["target"]["probability_semantics"] == "P(TARGET=1)"
+    assert provenance["metric_definitions"]["pr_auc"] == "Average precision."
+    assert provenance["threshold"] == 0.5
 
 
 def test_openapi_export_is_present(project_root: Path) -> None:

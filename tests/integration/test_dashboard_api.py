@@ -93,6 +93,35 @@ def test_agent_prediction_tool_runs_real_inference_without_shap(
     assert "TARGET" not in prediction
 
 
+def test_agent_explanation_tool_returns_filtered_real_shap(
+    connected_dashboard_client: tuple[TestClient, APIClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, client = connected_dashboard_client
+    monkeypatch.setattr(data_access, "_client", lambda: client)
+
+    explanation = tools.explain_prediction(120321)
+
+    assert explanation["status"] == "available"
+    assert explanation["application_id"] == 120321
+    assert explanation["prediction_probability"] == pytest.approx(
+        0.4915030896663666
+    )
+    assert explanation["explanation_method"] == "tree_shap"
+    assert explanation["output_space"] == "log_odds"
+    assert explanation["top_features"]
+    assert all(
+        set(feature) == {"feature", "shap_value", "effect"}
+        for feature in explanation["top_features"]
+    )
+    assert all(
+        feature["feature"] not in {"TARGET", "SK_ID_CURR"}
+        for feature in explanation["top_features"]
+    )
+    assert "raw_value" not in str(explanation)
+    assert "transformed_feature" not in str(explanation)
+
+
 def test_dashboard_client_reads_saved_prediction_and_evaluation_artifacts(
     connected_dashboard_client: tuple[TestClient, APIClient],
     model_dir: Path,

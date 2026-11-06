@@ -352,7 +352,14 @@ def test_overview_and_evaluation_use_backend_payloads(
                     "rows": [
                         {"model": "XGBoost", "metric": "ROC-AUC", "value": 0.8}
                     ],
-                    "provenance": {"n_samples": 3},
+                    "provenance": {
+                        "n_samples": 3,
+                        "target": {
+                            "name": "TARGET",
+                            "positive_class": 1,
+                            "probability_semantics": "P(TARGET=1)",
+                        },
+                    },
                     "confusion_matrix": {"tn": 1, "fp": 0, "fn": 1, "tp": 1},
                 },
             )
@@ -376,6 +383,8 @@ def test_overview_and_evaluation_use_backend_payloads(
     assert summary["total_applications"] == 307511
     assert summary["prediction_count"] == 3
     assert evaluation.iloc[0]["value"] == 0.8
+    assert evaluation.attrs["split"] == "test"
+    assert evaluation.attrs["provenance"]["target"]["positive_class"] == 1
     assert evaluation.attrs["confusion_matrix"]["tp"] == 1
     assert data_access.normalize_model_evaluation_results(evaluation)[0][
         "XGBoost"
