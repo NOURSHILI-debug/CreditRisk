@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import logging
 import os
 import re
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -14,6 +16,11 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent import prompts, tools
+from agent.privacy import (
+    minimize_application_lookup,
+    redact_applicant_identifier_fields,
+    redact_application_ids,
+)
 from agent.state import AgentConversationContext, AgentMessage, AgentState, AgentTool
 
 logger = logging.getLogger(__name__)
@@ -79,17 +86,44 @@ class RouteDecision(BaseModel):
     @model_validator(mode="after")
     def validate_route(self) -> "RouteDecision":
         if self.tools and self.tool is not None:
-            raise ValueError("Choose either one legacy tool or a tools list.")
-        if self.tool in {"general", "unsupported"} and self.tools:
-            raise ValueError("General and unsupported routes cannot select tools.")
+            if self.tool == "general":
+                # Some local models emit the legacy general marker alongside
+                # an explicit allowlisted tool list. The tool list is the more
+                # specific structured intent, so discard only that redundant
+                # marker before normal graph dispatch.
+                self.tool = None
+            elif self.tools == [self.tool]:
+                # Some structured-output models repeat a single selection in
+                # both schema fields. Collapse only an exact duplicate; any
+                # additional selection remains a validation error.
+                self.tools = []
+            elif self.tool == "unsupported":
+                raise ValueError("Unsupported routes cannot select tools.")
+            else:
+                raise ValueError("Choose either one legacy tool or a tools list.")
         return self
 
 
 def _create_chat_model() -> BaseChatModel:
     provider = os.environ.get("AGENT_LLM_PROVIDER", "openai").strip().lower()
+    if provider == "ollama":
+        from langchain_ollama import ChatOllama
+
+        model_name = os.environ.get("AGENT_LLM_MODEL", "llama3.1:8b").strip()
+        if not model_name:
+            raise AgentConfigurationError("AGENT_LLM_MODEL must not be empty.")
+        base_url = _validated_ollama_base_url(
+            os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
+            allow_remote=os.environ.get("OLLAMA_ALLOW_REMOTE", "false"),
+        )
+        return ChatOllama(
+            model=model_name,
+            base_url=base_url,
+            temperature=0,
+        )
     if provider != "openai":
         raise AgentConfigurationError(
-            f"Unsupported agent LLM provider {provider!r}; supported provider: 'openai'."
+            f"Unsupported agent LLM provider {provider!r}; supported providers: 'openai', 'ollama'."
         )
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
@@ -112,6 +146,70 @@ def _create_chat_model() -> BaseChatModel:
     if base_url:
         options["base_url"] = base_url
     return ChatOpenAI(**options)
+
+
+def _validated_ollama_base_url(value: str, *, allow_remote: str = "false") -> str:
+    """Validate a local Ollama endpoint or explicitly approved HTTPS endpoint."""
+    if allow_remote.strip().casefold() not in {"true", "false"}:
+        raise AgentConfigurationError("OLLAMA_ALLOW_REMOTE must be 'true' or 'false'.")
+    remote_enabled = allow_remote.strip().casefold() == "true"
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise AgentConfigurationError("OLLAMA_BASE_URL must be a valid absolute URL.")
+    if any(character.isspace() for character in value):
+        raise AgentConfigurationError("OLLAMA_BASE_URL must be a valid absolute URL.")
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as error:
+        raise AgentConfigurationError("OLLAMA_BASE_URL must be a valid absolute URL.") from error
+    if (
+        parsed.scheme.casefold() not in {"http", "https"}
+        or not parsed.netloc
+        or hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or (port is not None and not 1 <= port <= 65535)
+        or parsed.netloc.endswith(":")
+    ):
+        raise AgentConfigurationError("OLLAMA_BASE_URL must be a valid absolute URL.")
+    try:
+        address = ipaddress.ip_address(hostname)
+        is_local = address.is_loopback and "%" not in hostname
+    except ValueError:
+        is_local = hostname.casefold() == "localhost"
+        if not is_local:
+            try:
+                ascii_hostname = hostname.encode("idna").decode("ascii")
+            except UnicodeError as error:
+                raise AgentConfigurationError(
+                    "OLLAMA_BASE_URL must contain a valid hostname."
+                ) from error
+            labels = ascii_hostname.split(".")
+            if len(ascii_hostname) > 253 or any(
+                not label
+                or len(label) > 63
+                or re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+                is None
+                for label in labels
+            ):
+                raise AgentConfigurationError(
+                    "OLLAMA_BASE_URL must contain a valid hostname."
+                )
+    if is_local:
+        return value.rstrip("/")
+    if not remote_enabled:
+        raise AgentConfigurationError(
+            "Remote Ollama endpoints require OLLAMA_ALLOW_REMOTE=true."
+        )
+    if parsed.scheme.casefold() != "https":
+        raise AgentConfigurationError(
+            "Remote Ollama endpoints must use HTTPS when explicitly enabled."
+        )
+    return value.rstrip("/")
 
 
 def _extract_application_id(question: str) -> tuple[int | None, str | None]:
@@ -140,7 +238,14 @@ def _decision_from_model(
     current_application_id: int | None = None,
     last_intent: str | None = None,
 ) -> RouteDecision:
-    router = model.with_structured_output(RouteDecision)
+    if os.environ.get("AGENT_LLM_PROVIDER", "openai").strip().lower() == "ollama":
+        # Ollama's JSON-schema structured output is separate from function
+        # calling. The graph executes its own Python allowlist after routing.
+        router = model.with_structured_output(
+            RouteDecision, method="json_schema"
+        )
+    else:
+        router = model.with_structured_output(RouteDecision)
     messages = [
         SystemMessage(
             content=prompts.ROUTER_SYSTEM_PROMPT.format(
@@ -152,15 +257,14 @@ def _decision_from_model(
         messages.append(
             SystemMessage(
                 content=(
-                    "Session context only: current applicant ID is "
-                    f"{current_application_id}; previous intent was "
-                    f"{last_intent or 'not recorded'}. Use this applicant only "
-                    "when the new question clearly refers to the current applicant. "
+                    "Session context only: an application is available for a clear "
+                    "follow-up; previous intent was "
+                    f"{last_intent or 'not recorded'}. Do not assume or repeat its ID. "
                     "Previous tool outputs are not fresh evidence; retrieve again."
                 )
             )
         )
-    messages.append(HumanMessage(content=question))
+    messages.append(HumanMessage(content=redact_application_ids(question)))
     decision = router.invoke(messages)
     if isinstance(decision, RouteDecision):
         return decision
@@ -200,6 +304,58 @@ def _selected_tools(decision: RouteDecision) -> list[AgentTool]:
     if decision.tool in _ALLOWED_TOOLS:
         return [decision.tool]
     return []
+
+
+def _local_applicant_response(state: AgentState) -> str | None:
+    """Render applicant-specific results locally, outside every LLM context."""
+    selected_tools = state.get("selected_tools") or (
+        [state["selected_tool"]]
+        if state.get("selected_tool") is not None
+        else []
+    )
+    applicant_tools = [name for name in selected_tools if name in _APPLICATION_TOOLS]
+    if not applicant_tools:
+        return None
+
+    results = state.get("tool_results") or {}
+    if not results and len(applicant_tools) == 1:
+        candidate = state.get("tool_result")
+        if isinstance(candidate, Mapping):
+            results = {applicant_tools[0]: dict(candidate)}
+    if not any(
+        isinstance(results.get(name), Mapping)
+        and results[name].get("status")
+        in {"found", "available", "success", "partial"}
+        for name in applicant_tools
+    ):
+        return None
+
+    safe_results: dict[str, Any] = {}
+    for name in selected_tools:
+        result = results.get(name)
+        if not isinstance(result, Mapping):
+            safe_results[name] = {"status": "unavailable"}
+            continue
+        if name == "get_application_details":
+            safe_results[name] = minimize_application_lookup(
+                state.get("question", ""), result
+            )
+        elif name in _APPLICATION_TOOLS:
+            safe_results[name] = redact_applicant_identifier_fields(result)
+        else:
+            safe_results[name] = result
+
+    if len(selected_tools) == 1:
+        content: Any = safe_results.get(selected_tools[0], {"status": "unavailable"})
+    else:
+        content = {
+            "tool_results": safe_results,
+            "tool_statuses": state.get("tool_statuses", {}),
+        }
+    return (
+        "Applicant-specific results are returned without generative interpretation.\n"
+        + json.dumps(content, ensure_ascii=False, indent=2, allow_nan=False)
+    )
 
 
 def _result_status(result: Mapping[str, Any]) -> str:
@@ -600,6 +756,12 @@ def build_agent_graph(
                 "final_response": answer,
                 "messages": _append_assistant_message(state, answer),
             }
+        local_applicant_answer = _local_applicant_response(state)
+        if local_applicant_answer is not None:
+            return {
+                "final_response": local_applicant_answer,
+                "messages": _append_assistant_message(state, local_applicant_answer),
+            }
         comparison_result = None
         if state.get("selected_tool") == "get_model_comparison":
             comparison_result = tool_result
@@ -617,7 +779,7 @@ def build_agent_graph(
             answer = (
                 "A direct model comparison is not justified. "
                 f"{note if isinstance(note, str) and note else 'Evaluation protocol comparability is unavailable.'}\n"
-                f"{json.dumps(tool_result, ensure_ascii=False, indent=2, allow_nan=False)}"
+                f"{json.dumps(redact_applicant_identifier_fields(tool_result), ensure_ascii=False, indent=2, allow_nan=False)}"
             )
             return {
                 "final_response": answer,
@@ -676,7 +838,7 @@ def build_agent_graph(
                 prefix += " The configured source is labeled mock/demo data."
             answer = (
                 f"{prefix}\n"
-                f"{json.dumps(tool_result, ensure_ascii=False, indent=2, allow_nan=False)}"
+                f"{json.dumps(redact_applicant_identifier_fields(tool_result), ensure_ascii=False, indent=2, allow_nan=False)}"
             )
             return {
                 "final_response": answer,

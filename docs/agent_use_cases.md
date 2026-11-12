@@ -86,11 +86,11 @@ returned with invalid status. Unexpected exceptions are not silently caught.
 
 | Use case | Example questions | Required input | Proposed tool | Expected response | Possible failure or unavailable state |
 |---|---|---|---|---|---|
-| Application details | "Show the available details for application 1001." "Which fields are missing?" | One positive application ID | `get_application_details(application_id)` | Implemented: JSON-compatible lookup status, non-null application fields, and source-null field names. Omits dashboard-derived risk score/category fields. | Invalid ID, not found, duplicate ID, unavailable source/ID column, malformed provider response, or no fields to display. |
-| Credit-risk prediction | "Is a prediction available for application 1001?" "What probability and model version were returned?" | One positive application ID | `get_prediction(application_id)` | Runs fresh inference via `GET /applications/{application_id}/prediction` with `include_explanation=false`. Returns a JSON-compatible result with status, application ID, probability, risk level, available model name/version and timestamp, message, and source mode. Missing optional values remain null. | Invalid ID, application not found, valid application with no prediction, model unavailable, API connection failure, prediction execution failure, or malformed response. |
+| Application details | "What is AMT_CREDIT for application 1001?" | One positive application ID and one requested allowlisted attribute | `get_application_details(application_id)` | The API tool retains its full existing response contract. The agent locally returns only one explicitly requested allowlisted field; broad/full-record requests are withheld. No applicant record or value is sent to the LLM. | Invalid ID, not found, duplicate ID, unavailable source/ID column, malformed provider response, ambiguous/multiple requested fields, or no specifically requested field. |
+| Credit-risk prediction | "Is a prediction available for application 1001?" "What probability and model version were returned?" | One positive application ID | `get_prediction(application_id)` | Runs fresh inference via `GET /applications/{application_id}/prediction` with `include_explanation=false`. The validated prediction is returned locally without an LLM response call. Missing optional values remain null. | Invalid ID, application not found, valid application with no prediction, model unavailable, API connection failure, prediction execution failure, or malformed response. |
 | Dashboard metrics | "How many applications have valid targets?" "What are the target counts and available risk categories?" | No required input; optional scope only if the source supports it | `get_dashboard_metrics()` | Implemented: shared metric values and definitions, with unavailable target values remaining null. Empty data returns unavailable status and the actual zero total. | Provider unavailable, empty dataset, missing/invalid `TARGET`, absent risk field, malformed response, or mock-data source. |
 | Model comparison | "Compare the available XGBoost and LSTM metrics." "Which metrics are missing?" | No required input; optional period only if evaluation outputs support filtering | `get_model_comparison()` | Retrieves saved evaluation rows via the API. Preserves actual values in legacy model/metric mapping and per-model records; marks `comparison_available` true only when both models have complete metrics and shared split/population, target, metric-definition, threshold, and split-protocol metadata is present. | No evaluation results, one model absent, partial/invalid/duplicate metric rows, unavailable provider, malformed response, or incomplete/inconsistent evaluation protocol. |
-| Prediction explanation | "What explains the prediction for application 1001?" | One positive application ID | `explain_prediction(application_id)` | Runs fresh inference via `GET /applications/{application_id}/prediction` with `include_explanation=true`. Returns the prediction probability and risk/model metadata, SHAP method/output-space metadata, additive summary values, and the provider-ordered feature contributions. Only feature name, SHAP value, and verified effect are sent for each feature. | Invalid ID, application not found, valid application without a prediction, model unavailable, explanation unavailable, malformed response, API connection failure, or explanation execution failure. |
+| Prediction explanation | "What explains the prediction for application 1001?" | One positive application ID | `explain_prediction(application_id)` | Runs fresh inference via `GET /applications/{application_id}/prediction` with `include_explanation=true`. Validated SHAP summary and contributions are returned locally without an LLM response call. | Invalid ID, application not found, valid application without a prediction, model unavailable, explanation unavailable, malformed response, API connection failure, or explanation execution failure. |
 | Report generation | "Summarize the available model results for the selected period." "Create a current portfolio summary." | A requested period/scope string; it must be supported by the underlying source to filter data | `generate_report(period)` | Structured summary of retrieved application metrics and/or model results, with source, mock/real label, coverage, and unavailable sections identified. | Period not supported by source data, missing timestamps, unavailable inputs, partial results, or no evidence for requested trends. |
 
 `TARGET=1` means repayment difficulty; `TARGET=0` means no defined repayment
@@ -289,6 +289,14 @@ a documented result status or a raised, handled tool error.
 
 The agent must apply these rules consistently, regardless of phrasing:
 
+Applicant minimization uses the API's existing field allowlist as the maximum
+field set the agent may display. Because project documentation does not define
+a separate LLM disclosure policy and the API docs require local-only handling,
+no applicant-specific tool result is forwarded to any LLM provider. Application
+details require exactly one explicitly requested field; identifiers and all
+other record fields are excluded from the local response. This conservative
+agent behavior does not change direct API or dashboard responses.
+
 | Condition | Required behavior |
 |---|---|
 | Invalid application ID | State that the ID is invalid and provide the accepted positive-integer format. Do not call it not found. |
@@ -376,15 +384,42 @@ second orchestration framework is not a requirement.
 
 ### LLM configuration
 
-The LangGraph package is the orchestrator and `langchain-openai` is the
-initial chat-model adapter. Configuration is read at request time:
+The LangGraph package is the orchestrator. `langchain-openai` and
+`langchain-ollama` are optional provider adapters selected by configuration at
+request time:
 
-- `AGENT_LLM_PROVIDER`: defaults to `openai`; unsupported provider names raise
+- `AGENT_LLM_PROVIDER`: `openai` (default) or `ollama`; other values raise
   `AgentConfigurationError`.
-- `OPENAI_API_KEY`: required only when the default model is first requested;
-  it is read from the environment, never embedded in code.
-- `AGENT_LLM_MODEL`: optional model name; defaults to `gpt-4o-mini`.
+- `AGENT_LLM_MODEL`: optional model name. Defaults to `gpt-4o-mini` for
+  OpenAI and `llama3.1:8b` for Ollama.
+- `OPENAI_API_KEY`: required only when OpenAI is selected; read from the
+  environment and never embedded in code.
 - `OPENAI_BASE_URL`: optional OpenAI-compatible endpoint.
+- `OLLAMA_BASE_URL`: optional Ollama server URL; defaults to
+  `http://localhost:11434`. Ollama selection does not require or use an
+  OpenAI API key.
+- `OLLAMA_ALLOW_REMOTE`: defaults to `false`. A non-loopback Ollama endpoint
+  requires `true` and HTTPS. This checks the configured URL only; it does not
+  establish that a remote operator is trusted, compliant, or protected from
+  network-level attacks. Keep real applicant data on approved local systems.
+
+Ollama route selection uses LangChain's `json_schema` structured-output mode
+for `RouteDecision`. This produces a validated route object; the graph still
+executes tools through its Python allowlist. Install Ollama locally, pull the
+configured model, and keep the Ollama server bound to localhost for local
+development. Tool routing depends on the selected model correctly following
+the schema and is not evidence that ordinary chat alone supports agent use.
+
+The API documentation warns that applicant-derived responses are local-only
+until authentication and authorization exist. Accordingly, application IDs
+are redacted from router prompts, session IDs are not included in LLM context,
+and applicant-specific tool results are rendered locally without a response
+LLM call. Application details return at most one explicitly requested field
+from the existing API field allowlist; broad requests for a full record are
+withheld. The tool/API response contract itself is unchanged. Aggregate
+dashboard, evaluation, and report results may still be sent to the selected
+provider for language generation; deployments must assess whether those
+aggregates and user-entered text are appropriate for that provider.
 
 `build_agent_graph(model=...)` and `run_agent(..., model=...)` accept an
 injected LangChain chat model, so tests and custom integrations do not need an

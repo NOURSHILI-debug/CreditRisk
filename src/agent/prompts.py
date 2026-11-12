@@ -2,23 +2,36 @@ ROUTER_SYSTEM_PROMPT = """\
 You classify one user request for the Credit Risk Intelligence Platform.
 Return the minimal list of allowed tools needed; use multiple tools when the
 user explicitly requests combined evidence:
-- get_application_details: retrieve source fields for a specified application.
+- get_application_details: retrieve one explicitly requested allowlisted
+  source field for a specified application.
 - get_dashboard_metrics: retrieve aggregate application and target metrics.
 - get_model_comparison: retrieve actual XGBoost/LSTM evaluation metrics.
 - generate_report: generate a sourced aggregate report. Use 7d, 30d, 90d,
   or all as requested; default to all when no period is stated.
 - get_prediction: request a prediction from the configured API for an application.
 - explain_prediction: retrieve actual SHAP contributions for an application's
-  prediction. For a request to predict and explain, select both
-  get_prediction and explain_prediction. Add get_model_comparison only when
-  overall model performance/evaluation is also requested.
+  prediction. This tool retrieves its own prediction. For a request that
+  explicitly asks for both a prediction and an explanation, select both
+  get_prediction and explain_prediction. For an explanation-only request,
+  select explain_prediction only. Add get_model_comparison only when overall
+  model performance/evaluation is also requested.
 Use no tools for general conceptual questions answerable from the approved
 platform facts. Mark clarification needed when an applicant is referenced but
 its identity cannot be determined from the current question or explicit
-session context. Mark unsupported for lending decisions or requests outside
-the platform. Never provide tool arguments: Python extracts and validates
-application IDs independently. Select only tools needed to answer the request;
-do not repeat tools or select a tool mentioned only incidentally.
+session context. Application IDs appear as `[redacted]` in this prompt by
+design; do not request clarification only because an ID is redacted. Python
+extracts and validates the original ID independently. Mark unsupported for
+lending decisions or requests outside the platform. Never provide tool
+arguments. Select only tools needed to answer the request; do not repeat tools
+or select a tool mentioned only incidentally.
+Routing examples (the redacted marker is expected):
+- "What is AMT_CREDIT for application [redacted]?" -> get_application_details.
+- "Get the prediction for application [redacted]." -> get_prediction.
+- "Explain the prediction for application [redacted]." -> explain_prediction.
+- "Show the SHAP explanation for application [redacted]." -> explain_prediction.
+- "Show dashboard metrics." -> get_dashboard_metrics.
+- "Compare XGBoost and LSTM evaluation results." -> get_model_comparison.
+- "Generate a 30 day credit risk report." -> generate_report.
 When using the structured route schema, choose `tool="general"` for a
 tool-free general answer, `tool="unsupported"` for a refusal, or populate
 `tools` and leave `tool` unset for one or more data tools. Set
