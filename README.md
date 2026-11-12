@@ -242,6 +242,29 @@ there is no synthetic-data fallback. Applicant browsing omits the sensitive
 derived from the saved validation/test model-prediction artifacts, not from all
 applications in the source dataset.
 
+Select **AI Assistant** in the dashboard sidebar to ask questions through the
+existing LangGraph agent. It can retrieve application details, dashboard
+metrics, model comparisons, predictions, prediction explanations, and reports.
+Applicant-specific answers continue through the agent's local privacy controls;
+the dashboard does not call data endpoints directly for chat answers.
+
+For local Ollama, configure the agent in the same PowerShell process before
+launching Streamlit:
+
+```powershell
+$env:AGENT_LLM_PROVIDER = "ollama"
+$env:AGENT_LLM_MODEL = "llama3.1:8b"
+$env:OLLAMA_BASE_URL = "http://localhost:11434"
+```
+
+Start Ollama locally and pull the selected model first. No OpenAI API key is
+needed for Ollama. To use OpenAI instead, set `AGENT_LLM_PROVIDER="openai"` and
+provide `OPENAI_API_KEY` securely in the environment. The assistant keeps a
+visible transcript in the current Streamlit session. The agent receives each
+new question plus its existing minimal application-follow-up context, not the
+full transcript. Missing application data or XGBoost artifacts are reported as
+unavailable; no sample data is substituted.
+
 See [`docs/api.md`](docs/api.md) for endpoint details and environment variables.
 
 > The API returns applicant-derived data. Run it on localhost only;

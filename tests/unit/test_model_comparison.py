@@ -4,7 +4,7 @@ import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 from dashboard import data_access
-from dashboard.pages.model_comparison import render_model_comparison
+from dashboard.pages.model_comparison import _MODEL_COLORS, render_model_comparison
 
 
 def _results() -> pd.DataFrame:
@@ -55,7 +55,7 @@ def test_model_comparison_renders_real_metrics_metadata_and_confusion_matrix(
         "render_model_comparison()\n"
     ).run()
     assert not app.exception
-    assert "XGBoost" in [item.value for item in app.subheader]
+    assert any("XGBoost" in item.value for item in app.markdown)
     assert any("baseline-v2-local" in item.value for item in app.markdown)
     assert len(app.dataframe) == 2
     assert "ROC-AUC" in str(app.dataframe[0].value)
@@ -78,11 +78,35 @@ def test_model_comparison_reports_api_unavailable_without_mock_metrics(
         "render_model_comparison()\n"
     ).run()
     assert not app.exception
-    assert any(
-        "Evaluation API connection refused" in error.value
-        for error in app.error
+    assert any("Evaluation data is unavailable" in item.value for item in app.warning)
+    assert "Evaluation API connection refused" not in str(app)
+    assert any("No cached or illustrative metrics" in item.value for item in app.warning)
+
+
+def test_model_comparison_uses_distinct_series_colors() -> None:
+    assert _MODEL_COLORS["XGBoost"] != _MODEL_COLORS["LSTM"]
+
+
+def test_model_metadata_remains_available_when_evaluation_is_unavailable(
+    monkeypatch,
+) -> None:
+    def unavailable(_split: str):
+        raise data_access.DataSourceUnavailableError("private evaluation detail")
+
+    monkeypatch.setattr(data_access, "get_model_evaluation_results", unavailable)
+    monkeypatch.setattr(
+        data_access,
+        "get_model_info",
+        lambda: {"model_name": "XGBoost", "model_version": "v-test"},
     )
-    assert any("No cached or illustrative metrics" in item.value for item in app.info)
+    app = AppTest.from_string(
+        "from dashboard.pages.model_comparison import render_model_comparison\n"
+        "render_model_comparison()\n"
+    ).run()
+
+    assert not app.exception
+    assert any("v-test" in item.value for item in app.markdown)
+    assert "private evaluation detail" not in str(app)
 
 
 def test_evaluation_normalizer_does_not_fill_missing_model_scores() -> None:

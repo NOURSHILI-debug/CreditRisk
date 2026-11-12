@@ -45,7 +45,9 @@ def test_prediction_response_rejects_invalid_probabilities() -> None:
 
 
 def test_detail_formatting_does_not_special_case_target() -> None:
-    assert _format_detail_value("AMT_CREDIT", 50000) == "$50,000"
+    assert _format_detail_value("AMT_CREDIT", 50000) == "50,000"
+    assert _format_detail_value("DAYS_BIRTH", -12000) == "32.9 years"
+    assert _format_detail_value("DAYS_EMPLOYED", -365) == "-365 source days"
     assert _format_detail_value("NAME_INCOME_TYPE", "Working") == "Working"
     assert "TARGET" not in {
         field for _, fields in _DETAIL_GROUPS for field, _ in fields
@@ -107,8 +109,9 @@ def test_unavailable_api_is_reported_without_sample_applicants(monkeypatch) -> N
         "render_application_explorer()\n"
     ).run()
     assert not app.exception
-    assert any("API connection refused" in error.value for error in app.error)
-    assert any("No local or mock applicant data is shown." in item.value for item in app.info)
+    assert any("Applicant data is unavailable" in item.value for item in app.warning)
+    assert any("No sample records are shown" in item.value for item in app.warning)
+    assert "API connection refused" not in str(app)
 
 
 def test_nonfirst_applicant_selection_survives_details_rerun(monkeypatch) -> None:
