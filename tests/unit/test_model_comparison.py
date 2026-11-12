@@ -73,6 +73,11 @@ def test_model_comparison_reports_api_unavailable_without_mock_metrics(
     monkeypatch.setattr(
         data_access, "get_model_evaluation_results", unavailable
     )
+    monkeypatch.setattr(
+        data_access,
+        "get_model_info",
+        lambda: {"model_name": "XGBoost", "model_version": "test-version"},
+    )
     app = AppTest.from_string(
         "from dashboard.pages.model_comparison import render_model_comparison\n"
         "render_model_comparison()\n"

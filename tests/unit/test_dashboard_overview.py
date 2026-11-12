@@ -35,6 +35,7 @@ def _evaluation() -> pd.DataFrame:
         "n_samples": 46127,
         "threshold": 0.5,
         "generated_at": "2026-11-04T12:00:00Z",
+        "lstm_available": False,
     }
     results.attrs["confusion_matrix"] = {
         "tn": 10,
@@ -45,7 +46,24 @@ def _evaluation() -> pd.DataFrame:
     return results
 
 
+def _health() -> dict[str, object]:
+    return {"status": "ok", "data_available": True, "model_loaded": True}
+
+
+def _unavailable(*_args, **_kwargs):
+    raise data_access.DataSourceUnavailableError("API unavailable")
+
+
 def test_overview_displays_only_api_provided_values(monkeypatch) -> None:
+    monkeypatch.setattr(
+        data_access,
+        "get_api_health",
+        lambda: {
+            "status": "degraded",
+            "data_available": True,
+            "model_loaded": False,
+        },
+    )
     monkeypatch.setattr(data_access, "get_overview_metrics", _summary)
     monkeypatch.setattr(
         data_access, "get_model_evaluation_results", lambda split: _evaluation()
@@ -76,6 +94,10 @@ def test_overview_displays_only_api_provided_values(monkeypatch) -> None:
         element.value for element in app.subheader
     )
     assert any("test_predictions.csv" in item.value for item in app.caption)
+    assert "Connected" in [item.value for item in app.markdown]
+    assert "Available" in [item.value for item in app.markdown]
+    assert "Unavailable" in [item.value for item in app.markdown]
+    assert "LSTM evaluation: not available" in " ".join(item.value for item in app.caption)
 
 
 def test_overview_api_unavailable_has_no_fallback_data(monkeypatch) -> None:
@@ -84,7 +106,10 @@ def test_overview_api_unavailable_has_no_fallback_data(monkeypatch) -> None:
             "Credit-risk API connection refused"
         )
 
+    monkeypatch.setattr(data_access, "get_api_health", unavailable)
     monkeypatch.setattr(data_access, "get_overview_metrics", unavailable)
+    monkeypatch.setattr(data_access, "get_model_evaluation_results", _unavailable)
+    monkeypatch.setattr(data_access, "get_model_info", unavailable)
     app = AppTest.from_string(
         "import streamlit as st\n"
         "from dashboard.pages.overview import render_overview\n"
@@ -97,6 +122,7 @@ def test_overview_api_unavailable_has_no_fallback_data(monkeypatch) -> None:
 
 
 def test_evaluation_failure_does_not_hide_available_portfolio_summary(monkeypatch) -> None:
+    monkeypatch.setattr(data_access, "get_api_health", _health)
     monkeypatch.setattr(data_access, "get_overview_metrics", _summary)
 
     def unavailable(_split: str):
@@ -119,6 +145,7 @@ def test_evaluation_failure_does_not_hide_available_portfolio_summary(monkeypatc
 
 
 def test_model_metadata_failure_does_not_hide_summary_or_evaluation(monkeypatch) -> None:
+    monkeypatch.setattr(data_access, "get_api_health", _health)
     monkeypatch.setattr(data_access, "get_overview_metrics", _summary)
     monkeypatch.setattr(data_access, "get_model_evaluation_results", lambda _split: _evaluation())
 
@@ -135,3 +162,22 @@ def test_model_metadata_failure_does_not_hide_summary_or_evaluation(monkeypatch)
     assert len(app.dataframe) >= 2
     assert any("Model metadata is unavailable" in item.value for item in app.warning)
     assert "private metadata error" not in str(app)
+
+
+def test_empty_evaluation_is_not_shown_as_zero(monkeypatch) -> None:
+    monkeypatch.setattr(data_access, "get_api_health", _health)
+    monkeypatch.setattr(data_access, "get_overview_metrics", _summary)
+    monkeypatch.setattr(data_access, "get_model_info", lambda: {"model_name": "XGBoost"})
+    empty = pd.DataFrame(columns=["model", "metric", "value"])
+    empty.attrs["split"] = "test"
+    empty.attrs["provenance"] = {"lstm_available": False}
+    monkeypatch.setattr(data_access, "get_model_evaluation_results", lambda _split: empty)
+
+    app = AppTest.from_string(
+        "from dashboard.pages.overview import render_overview\nrender_overview()\n"
+    ).run()
+
+    assert not app.exception
+    assert any("No metrics were produced" in item.value for item in app.caption)
+    assert "0.0%" not in str(app)
+    assert "LSTM evaluation: not available" in " ".join(item.value for item in app.caption)
