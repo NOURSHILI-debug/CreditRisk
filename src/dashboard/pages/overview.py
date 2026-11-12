@@ -96,10 +96,43 @@ def _render_confusion_matrix(confusion: object, provenance: dict[str, Any]) -> N
 
 def render_overview() -> None:
     render_page_header(
-        "Overview",
-        "Portfolio coverage, saved prediction outputs, and model evaluation from the local API.",
+        "Credit Risk Overview",
+        "A concise view of the available application portfolio, saved risk indicators, and model evaluation.",
     )
 
+    # API reachability and artifact readiness are separate states.
+    health: dict[str, Any] | None = None
+    try:
+        health = data_access.get_api_health()
+    except data_access.DataAccessError:
+        pass
+
+    health_columns = st.columns(3, gap="medium")
+    health_values = (
+        ("API connection", "Unavailable" if health is None else "Connected"),
+        (
+            "Application data",
+            "Status unavailable"
+            if health is None
+            else "Available"
+            if health.get("data_available") is True
+            else "Unavailable",
+        ),
+        (
+            "Model artifacts",
+            "Status unavailable"
+            if health is None
+            else "Loaded"
+            if health.get("model_loaded") is True
+            else "Unavailable",
+        ),
+    )
+    for column, (label, value) in zip(health_columns, health_values):
+        with column:
+            st.markdown(f"**{label}**")
+            st.markdown(value)
+
+    st.divider()
     metrics: dict[str, Any] | None = None
     try:
         with st.spinner("Loading portfolio summary..."):
@@ -150,6 +183,11 @@ def render_overview() -> None:
             f"{bands['low_upper']:.0%}, MEDIUM < {bands['medium_upper']:.0%}, "
             "HIGH otherwise. These categories are not lending decisions."
         )
+        st.divider()
+        render_section_heading(
+            "Risk overview",
+            f"Saved {summary['prediction_split']} prediction records are a subset of the available application portfolio.",
+        )
         risk_column, outcomes_column = st.columns(2, gap="large")
         with risk_column:
             render_section_heading("Risk distribution")
@@ -170,7 +208,8 @@ def render_overview() -> None:
                 f"Counts use the saved model threshold ({threshold_label}). These are model classifications, not credit decisions."
             )
 
-    render_section_heading("Evaluation performance")
+    st.divider()
+    render_section_heading("Model and evaluation health")
     evaluation_split = metrics["prediction_split"] if metrics else "test"
     results: pd.DataFrame | None = None
     try:
@@ -184,9 +223,24 @@ def render_overview() -> None:
         )
     if results is not None:
         split_label = results.attrs.get("split", evaluation_split)
-        st.caption(f"Saved evaluation artifact · {str(split_label).title()} split")
+        evaluation_state = (
+            "No metrics were produced"
+            if results.empty
+            else "Saved evaluation metrics available"
+        )
+        st.caption(f"{str(split_label).title()} split · {evaluation_state}")
         _render_evaluation(results)
         provenance = results.attrs.get("provenance", {})
+        available_models = sorted(
+            {
+                str(model_name)
+                for model_name in results.get("model", pd.Series(dtype=str)).dropna()
+            }
+        )
+        if available_models:
+            st.caption(f"Evaluation available for: {', '.join(available_models)}.")
+        if provenance.get("lstm_available") is False:
+            st.caption("LSTM evaluation: not available in the current API artifacts.")
         confusion = results.attrs.get("confusion_matrix")
         if isinstance(confusion, dict):
             with st.expander("Confusion matrix"):
@@ -217,3 +271,9 @@ def render_overview() -> None:
     }
     with st.expander("View metadata and evaluation provenance"):
         st.json(metadata)
+
+    st.divider()
+    render_section_heading("Continue your review")
+    st.caption(
+        "Use the sidebar to explore application records, review model performance, or open the AI Assistant."
+    )
