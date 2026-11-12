@@ -7,6 +7,12 @@ import pandas as pd
 import streamlit as st
 
 from dashboard import data_access
+from dashboard.components.ui import (
+    render_metric_grid,
+    render_page_header,
+    render_section_heading,
+    render_status,
+)
 
 _DETAIL_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
@@ -32,8 +38,8 @@ _DETAIL_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Demographic information",
         (
-            ("DAYS_BIRTH", "Days birth"),
-            ("DAYS_EMPLOYED", "Days employed"),
+            ("DAYS_BIRTH", "Age at application"),
+            ("DAYS_EMPLOYED", "Employment day offset"),
             ("CNT_CHILDREN", "Number of children"),
             ("CNT_FAM_MEMBERS", "Family members"),
         ),
@@ -50,6 +56,29 @@ _FILTERS = {
     "Contract type": "NAME_CONTRACT_TYPE",
     "Education type": "NAME_EDUCATION_TYPE",
 }
+_FIELD_LABELS = {
+    "SK_ID_CURR": "Application ID",
+    "NAME_CONTRACT_TYPE": "Contract type",
+    "NAME_INCOME_TYPE": "Income type",
+    "NAME_EDUCATION_TYPE": "Education type",
+    "NAME_FAMILY_STATUS": "Family status",
+    "NAME_HOUSING_TYPE": "Housing type",
+    "AMT_INCOME_TOTAL": "Income (source units)",
+    "AMT_CREDIT": "Credit amount (source units)",
+    "AMT_ANNUITY": "Annuity (source units)",
+    "AMT_GOODS_PRICE": "Goods price (source units)",
+    "DAYS_BIRTH": "Age at application (years)",
+    "DAYS_EMPLOYED": "Employment day offset (source days)",
+    "CNT_CHILDREN": "Number of children",
+    "CNT_FAM_MEMBERS": "Family members",
+}
+_COMPACT_COLUMNS = (
+    "SK_ID_CURR",
+    "NAME_CONTRACT_TYPE",
+    "NAME_INCOME_TYPE",
+    "AMT_INCOME_TOTAL",
+    "AMT_CREDIT",
+)
 
 
 def _format_detail_value(field: str, value: Any) -> str:
@@ -60,7 +89,19 @@ def _format_detail_value(field: str, value: Any) -> str:
             amount = float(value)
         except (TypeError, ValueError, OverflowError):
             return str(value)
-        return f"${amount:,.0f}" if math.isfinite(amount) else "N/A"
+        return f"{amount:,.0f}" if math.isfinite(amount) else "N/A"
+    if field == "DAYS_BIRTH":
+        try:
+            days = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return str(value)
+        return f"{abs(days) / 365.25:.1f} years" if math.isfinite(days) else "N/A"
+    if field == "DAYS_EMPLOYED":
+        try:
+            days = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return str(value)
+        return f"{days:,.0f} source days" if math.isfinite(days) else "N/A"
     return str(value)
 
 
@@ -78,23 +119,51 @@ def _render_application_details(application: pd.Series) -> None:
             columns = st.columns(min(3, len(fields)), gap="large")
             for index, (field, label) in enumerate(fields):
                 with columns[index % len(columns)]:
-                    st.metric(label, _format_detail_value(field, application[field]))
+                    st.metric(
+                        label,
+                        _format_detail_value(field, application[field]),
+                        help=(
+                            "Age is calculated from the source day offset for display only."
+                            if field == "DAYS_BIRTH"
+                            else "Original source value; the API does not provide a currency code."
+                            if field in _CURRENCY_FIELDS
+                            else None
+                        ),
+                    )
 
 
 def _render_application_table(applications: pd.DataFrame) -> None:
     if applications.empty:
         st.info("No applications match the current search or filters.")
         return
-    display = applications.copy()
-    display = display.drop(columns=["TARGET"], errors="ignore")
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    display = applications.drop(columns=["TARGET"], errors="ignore")
+    show_all_fields = st.checkbox(
+        "Show all available application fields",
+        value=False,
+        help="The API response remains unchanged; this only changes the visible table columns.",
+    )
+    column_order = list(display.columns)
+    if not show_all_fields:
+        compact = [field for field in _COMPACT_COLUMNS if field in display.columns]
+        column_order = compact + [field for field in display.columns if field not in compact]
+        column_order = compact
+    column_config = {
+        field: st.column_config.Column(_FIELD_LABELS.get(field, field.replace("_", " ").title()))
+        for field in display.columns
+    }
+    st.dataframe(
+        display,
+        use_container_width=True,
+        hide_index=True,
+        column_order=column_order,
+        column_config=column_config,
+    )
 
 
 def render_application_explorer() -> None:
-    st.title("Application Explorer")
-    st.caption(
-        "Search and filter real application records from the backend dataset. "
-        "TARGET and other outcome labels are not exposed in this view."
+    render_page_header(
+        "Application Explorer",
+        "Find an application, review permitted source fields, then inspect its model output and explanation.",
     )
     saved_filter_field = st.session_state.get("application_search_filter_field")
     saved_filter_label = next(
@@ -105,7 +174,8 @@ def render_application_explorer() -> None:
         ),
         "No category filter",
     )
-    with st.form("application_explorer_filters"):
+    render_section_heading("Find an application", "Search by ID or narrow results by an exact category value.")
+    with st.form("application_explorer_filters", border=True):
         id_text = st.text_input(
             "Search by application ID",
             value=st.session_state.get("application_search_id", ""),
@@ -137,7 +207,7 @@ def render_application_explorer() -> None:
     if raw_id:
         parsed_id = data_access.parse_application_id(raw_id)
         if parsed_id is None:
-            st.warning("Enter a positive integer application ID.")
+            render_status("Enter a positive integer application ID.", kind="warning")
             return
         application_id = parsed_id
 
@@ -159,9 +229,12 @@ def render_application_explorer() -> None:
                 filter_field=filter_field,
                 filter_value=filter_value,
             )
-    except data_access.DataAccessError as error:
-        st.error(f"Applicant data is unavailable: {error}")
-        st.info("No local or mock applicant data is shown.")
+    except data_access.DataAccessError:
+        render_status(
+            "Applicant data is unavailable.",
+            "Check that the local API and authorized application data are available. No sample records are shown.",
+            kind="warning",
+        )
         return
 
     _render_application_table(applications)
@@ -204,20 +277,34 @@ def render_application_explorer() -> None:
     if st.button("Load applicant details"):
         try:
             result = data_access.get_application_by_id(selected_id)
-        except data_access.DataAccessError as error:
-            st.error(f"Could not load applicant details: {error}")
+        except data_access.DataAccessError:
+            render_status(
+                "Applicant details could not be retrieved.",
+                "Check API availability and try again.",
+                kind="error",
+            )
         else:
             if result.status == "found" and result.application is not None:
                 st.session_state["selected_application"] = selected_id
                 st.session_state["selected_application_details"] = result.application
                 st.session_state.pop("application_prediction", None)
             else:
-                st.error(f"Could not load applicant details ({result.status}).")
+                detail_messages = {
+                    "not_found": "No application was found for this ID.",
+                    "duplicate": "More than one application matched this ID.",
+                    "unavailable": "Applicant details are currently unavailable.",
+                    "invalid_id": "The application ID is invalid.",
+                }
+                render_status(
+                    detail_messages.get(result.status, "Applicant details could not be retrieved."),
+                    kind="warning",
+                )
 
     if st.session_state.get("selected_application") == selected_id:
         application = st.session_state.get("selected_application_details")
         if isinstance(application, pd.Series):
-            st.subheader(f"Application {selected_id}")
+            render_section_heading(f"Application {selected_id}", "Permitted application details from the API.")
+            st.caption("Monetary amounts use source units; the API does not provide a currency code.")
             _render_application_details(application)
         if st.button("Run XGBoost prediction and SHAP explanation"):
             try:
@@ -227,7 +314,11 @@ def render_application_explorer() -> None:
                     )
                 st.session_state["application_prediction"] = prediction
             except data_access.DataAccessError as error:
-                st.error(f"Prediction request failed: {error}")
+                render_status(
+                    "Prediction could not be completed.",
+                    "Check model availability and try again.",
+                    kind="error",
+                )
         prediction = st.session_state.get("application_prediction")
         if prediction is not None:
             _render_prediction_result(prediction)
@@ -235,18 +326,38 @@ def render_application_explorer() -> None:
 
 def _render_prediction_result(prediction: data_access.CreditRiskPrediction) -> None:
     with st.container(border=True):
-        st.subheader("XGBoost credit-risk prediction")
+        render_section_heading("Model prediction")
         if prediction.status != "available" or prediction.probability is None:
-            st.error(
-                prediction.message
-                or f"Prediction is {prediction.status}; no score is available."
-            )
+            if prediction.status in {"unavailable", "model_unavailable", "no_prediction"}:
+                render_status(
+                    "No prediction is currently available.",
+                    "The application record may exist while its model output or required artifact is unavailable.",
+                    kind="warning",
+                )
+            elif prediction.status == "not_found":
+                render_status("No application was found for this prediction request.", kind="warning")
+            else:
+                render_status(
+                    "The prediction request could not be completed.",
+                    "No score is displayed because the API did not return a valid prediction.",
+                    kind="error",
+                )
             return
-        st.metric(
-            "Probability of repayment difficulty",
-            f"{prediction.probability:.1%}",
+        render_metric_grid(
+            [
+                (
+                    "Probability of repayment difficulty",
+                    f"{prediction.probability:.1%}",
+                    "Model probability returned by the API; not a lending decision.",
+                ),
+                (
+                    "Provisional model risk band",
+                    prediction.risk_level or "Unavailable",
+                    "A model category, not an approval or rejection decision.",
+                ),
+            ],
+            columns=2,
         )
-        st.metric("Risk category", prediction.risk_level or "unavailable")
         try:
             thresholds = data_access.get_model_info().get("thresholds", {})
             bands = thresholds.get("risk_bands", {})
@@ -259,8 +370,12 @@ def _render_prediction_result(prediction: data_access.CreditRiskPrediction) -> N
                 )
             else:
                 st.warning("The API did not provide model risk-band thresholds.")
-        except data_access.DataAccessError as error:
-            st.error(f"Could not retrieve risk-band definitions: {error}")
+        except data_access.DataAccessError:
+            render_status(
+                "Risk-band definitions are unavailable.",
+                "The prediction is shown with the model metadata returned by the prediction endpoint.",
+                kind="warning",
+            )
         st.caption(
             f"Model: {prediction.model_name or 'N/A'} "
             f"({prediction.model_version or 'version unavailable'}); "
@@ -271,7 +386,7 @@ def _render_prediction_result(prediction: data_access.CreditRiskPrediction) -> N
         if not isinstance(explanation, dict):
             st.info("The API did not return a SHAP explanation for this prediction.")
             return
-        st.subheader("Why this score?")
+        render_section_heading("Model explanation", "Feature contributions describe model associations, not causes.")
         st.write(
             "These are the features that most influenced the model's estimated "
             "risk for this application. They describe model associations, not causes."

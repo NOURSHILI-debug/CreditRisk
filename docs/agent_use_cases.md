@@ -12,9 +12,10 @@ system. It must not approve or reject an application, fabricate application
 fields, predictions, metrics, or explanations, or make unsupported financial,
 causal, or historical claims.
 
-This document defines the approved initial agent-facing tools. The five
-data tools are implemented as deterministic wrappers in `src/agent/tools.py`.
-Report generation remains future work. No chat interface is implemented.
+This document defines the six approved agent-facing tools. They are
+implemented as deterministic wrappers in `src/agent/tools.py`, including
+aggregate report generation, and are available through the dashboard's AI
+Assistant page.
 
 ## 2. Users and supported questions
 
@@ -430,7 +431,7 @@ the module or building the graph.
 ## 8. Intended architecture
 
 ```text
-Streamlit chat interface (future)
+Streamlit dashboard with AI Assistant page (implemented)
         |
         v
 LangGraph single-agent workflow (implemented)
@@ -451,12 +452,26 @@ Retrieved results + provenance/status
 Grounded agent response
 ```
 
-Only the orchestration layer, prompts, typed state, and six tools are
-implemented. The Streamlit chat interface remains future work. The agent must
-not independently read datasets, model artifacts, or storage, and must not
-duplicate dashboard retrieval or metric logic. Any new source should be
-connected through a provider/data-access contract, then exposed through a
-narrow validated agent tool.
+The Streamlit AI Assistant page calls the existing `run_agent()` entry point;
+all six tools continue through the same LangGraph allowlist. The chat transcript
+is retained in Streamlit session state for display. Each turn passes only the
+current question and the existing minimal `AgentConversationContext` (current
+application ID and last intent); the full chat transcript is not sent to the
+agent. Clearing the conversation clears both the displayed transcript and that
+context. The agent must not independently read datasets, model artifacts, or
+storage, and must not duplicate dashboard retrieval or metric logic. Any new
+source should be connected through a provider/data-access contract, then
+exposed through a narrow validated agent tool.
+
+Run the dashboard using the commands in the README or `docs/api.md`, then
+select **AI Assistant** in the sidebar. Ollama remains the default local option
+when selected through `AGENT_LLM_PROVIDER=ollama`; the app uses
+`OLLAMA_BASE_URL` (default `http://localhost:11434`) and needs no OpenAI key.
+For OpenAI, set `AGENT_LLM_PROVIDER=openai` and provide `OPENAI_API_KEY` through
+the process environment or a secret manager. Provider configuration stays in
+the existing agent factory, not the dashboard page. The six tools are
+application details, dashboard metrics, model comparison, prediction,
+prediction explanation, and report generation.
 
 ## 9. Person 1 integration requirements
 
@@ -486,13 +501,13 @@ Before real-data use, Person 1 should agree and provide:
 - **Source provenance:** A way to identify mock/demo versus real source and,
   for real outputs, the relevant model/data version where available.
 
-Person 2 owns the implemented wrappers and LangGraph workflow, and remains
-responsible for their maintenance and a future chat UI.
+Person 2 owns the implemented wrappers, LangGraph workflow, and Streamlit
+assistant page, and remains responsible for their maintenance.
 The agent should integrate only through agreed interfaces, not ML internals.
 
 ## 10. Explicit out of scope
 
-- Chatbot UI and long-term conversation memory.
+- Long-term conversation memory across dashboard sessions.
 - Causal interpretation of SHAP contributions or use of explanations as
   lending recommendations.
 - Training, modifying, or deploying XGBoost or LSTM.

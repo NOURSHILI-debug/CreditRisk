@@ -68,8 +68,8 @@ def test_overview_displays_only_api_provided_values(monkeypatch) -> None:
     ).run()
     assert not app.exception
     metric_values = {metric.label: metric.value for metric in app.metric}
-    assert metric_values["Applications in dataset"] == "307,511"
-    assert metric_values["Test predictions"] == "46,127"
+    assert metric_values["Applications available"] == "307,511"
+    assert metric_values["Test prediction records"] == "46,127"
     assert metric_values["Low-risk predictions"] == "10"
     assert metric_values["High-risk predictions"] == "30"
     assert "TARGET" not in " ".join(
@@ -91,7 +91,47 @@ def test_overview_api_unavailable_has_no_fallback_data(monkeypatch) -> None:
         "render_overview()\n"
     ).run()
     assert not app.exception
-    assert any(
-        "Credit-risk API connection refused" in error.value for error in app.error
+    assert not app.metric
+    assert any("Portfolio summary is unavailable" in item.value for item in app.warning)
+    assert "No values are substituted" in app.warning[0].value
+
+
+def test_evaluation_failure_does_not_hide_available_portfolio_summary(monkeypatch) -> None:
+    monkeypatch.setattr(data_access, "get_overview_metrics", _summary)
+
+    def unavailable(_split: str):
+        raise data_access.DataSourceUnavailableError("private API detail")
+
+    monkeypatch.setattr(data_access, "get_model_evaluation_results", unavailable)
+    monkeypatch.setattr(
+        data_access,
+        "get_model_info",
+        lambda: {"model_name": "XGBoost", "thresholds": {}},
     )
-    assert any("No sample data is shown" in item.value for item in app.info)
+    app = AppTest.from_string(
+        "from dashboard.pages.overview import render_overview\nrender_overview()\n"
+    ).run()
+
+    assert not app.exception
+    assert {metric.label: metric.value for metric in app.metric}["Applications available"] == "307,511"
+    assert any("Evaluation metrics are unavailable" in item.value for item in app.warning)
+    assert "private API detail" not in str(app)
+
+
+def test_model_metadata_failure_does_not_hide_summary_or_evaluation(monkeypatch) -> None:
+    monkeypatch.setattr(data_access, "get_overview_metrics", _summary)
+    monkeypatch.setattr(data_access, "get_model_evaluation_results", lambda _split: _evaluation())
+
+    def unavailable():
+        raise data_access.DataSourceUnavailableError("private metadata error")
+
+    monkeypatch.setattr(data_access, "get_model_info", unavailable)
+    app = AppTest.from_string(
+        "from dashboard.pages.overview import render_overview\nrender_overview()\n"
+    ).run()
+
+    assert not app.exception
+    assert any(metric.label == "Applications available" for metric in app.metric)
+    assert len(app.dataframe) >= 2
+    assert any("Model metadata is unavailable" in item.value for item in app.warning)
+    assert "private metadata error" not in str(app)

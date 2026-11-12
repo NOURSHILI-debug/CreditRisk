@@ -7,8 +7,13 @@ import plotly.express as px
 import streamlit as st
 
 from dashboard import data_access
-from dashboard.components.metrics import render_metric
 from dashboard.components.theme import BLUE, RED, TEAL, style_chart
+from dashboard.components.ui import (
+    render_metric_grid,
+    render_page_header,
+    render_section_heading,
+    render_status,
+)
 
 _RISK_COLORS = {"LOW": TEAL, "MEDIUM": BLUE, "HIGH": RED}
 
@@ -16,168 +21,199 @@ _RISK_COLORS = {"LOW": TEAL, "MEDIUM": BLUE, "HIGH": RED}
 def _render_risk_distribution(summary: dict[str, Any]) -> None:
     distribution = summary.get("risk_distribution")
     if not isinstance(distribution, dict) or not any(distribution.values()):
-        st.info("No saved prediction records are available for this split.")
+        render_status(
+            "No saved prediction records are available for this split.",
+            "Risk distribution will appear when the API supplies prediction records.",
+        )
         return
+
+    order = [category for category in ("LOW", "MEDIUM", "HIGH") if category in distribution]
     chart_data = pd.DataFrame(
         [
-            {"Risk category": category, "Predictions": count}
-            for category, count in distribution.items()
+            {"Risk category": category, "Prediction records": distribution[category]}
+            for category in order
         ]
     )
     fig = px.bar(
         chart_data,
         x="Risk category",
-        y="Predictions",
+        y="Prediction records",
         color="Risk category",
+        category_orders={"Risk category": order},
         color_discrete_map=_RISK_COLORS,
-        text="Predictions",
-        title=f"Risk distribution — {summary['prediction_split']} prediction records",
+        text="Prediction records",
+        title=f"Risk categories · {summary['prediction_split'].title()} split",
     )
-    fig.update_layout(showlegend=False, yaxis_title="Saved model predictions")
-    style_chart(fig, height=360)
+    fig.update_layout(showlegend=False, yaxis_title="Saved prediction records")
+    fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{x}<br>%{y:,} records<extra></extra>")
+    style_chart(fig, height=330)
     st.plotly_chart(fig, use_container_width=True)
 
 
 def _render_evaluation(results: pd.DataFrame) -> None:
     if results.empty:
-        st.info("No evaluation metrics are available for this split.")
+        render_status("No evaluation metrics were produced for this split.")
         return
     display = results.loc[:, ["model", "metric", "value"]].copy()
     display["value"] = display["value"].map(
         lambda value: f"{value:.1%}" if pd.notna(value) else "N/A"
     )
     st.dataframe(
-        display.rename(
-            columns={"model": "Model", "metric": "Metric", "value": "Score"}
-        ),
+        display.rename(columns={"model": "Model", "metric": "Metric", "value": "Score"}),
         use_container_width=True,
         hide_index=True,
+        column_config={
+            "Model": st.column_config.TextColumn("Model", width="small"),
+            "Metric": st.column_config.TextColumn("Metric", width="medium"),
+            "Score": st.column_config.TextColumn("Score", width="small"),
+        },
     )
+
+
+def _render_confusion_matrix(confusion: object, provenance: dict[str, Any]) -> None:
+    if not isinstance(confusion, dict):
+        render_status("No confusion matrix was produced for this evaluation.")
+        return
+    matrix = pd.DataFrame(
+        [
+            {
+                "Actual class": "No defined repayment difficulty",
+                "Predicted: no difficulty": confusion.get("tn"),
+                "Predicted: repayment difficulty": confusion.get("fp"),
+            },
+            {
+                "Actual class": "Repayment difficulty",
+                "Predicted: no difficulty": confusion.get("fn"),
+                "Predicted: repayment difficulty": confusion.get("tp"),
+            },
+        ]
+    )
+    st.dataframe(matrix, use_container_width=True, hide_index=True)
+    threshold = confusion.get("threshold", provenance.get("threshold"))
+    threshold_label = f"{threshold:.3g}" if isinstance(threshold, (int, float)) else "not recorded"
+    st.caption(f"Actual classes are rows; model predictions are columns. Saved probability threshold: {threshold_label}.")
 
 
 def render_overview() -> None:
-    st.title("Overview")
-    st.caption(
-        "Live portfolio size, saved model predictions, and evaluation results "
-        "provided by the local FastAPI service."
+    render_page_header(
+        "Overview",
+        "Portfolio coverage, saved prediction outputs, and model evaluation from the local API.",
     )
-    if st.button("Refresh live data"):
-        st.rerun()
 
+    metrics: dict[str, Any] | None = None
     try:
-        with st.spinner("Loading data from the credit-risk API..."):
+        with st.spinner("Loading portfolio summary..."):
+            # This existing adapter combines application count and prediction summary.
             metrics = data_access.get_overview_metrics()
-            results = data_access.get_model_evaluation_results(
-                metrics["prediction_split"]
-            )
-            model = data_access.get_model_info()
-    except data_access.DataAccessError as error:
-        st.error(f"Live data could not be retrieved from the API: {error}")
-        st.info(
-            "Start the FastAPI service on 127.0.0.1:8000 and refresh this page. "
-            "No sample data is shown while the API is unavailable."
+    except data_access.DataAccessError:
+        render_status(
+            "Portfolio summary is unavailable.",
+            "Application and prediction totals could not be retrieved. Check that both sources are available in the local API. No values are substituted.",
+            kind="warning",
         )
-        return
 
-    summary = metrics
-    distribution = summary["risk_distribution"]
-    prediction_count = summary["prediction_count"]
-    columns = st.columns(4, gap="large")
-    metric_values = (
-        ("Applications in dataset", f"{metrics['total_applications']:,}"),
-        (f"{summary['prediction_split'].title()} predictions", f"{prediction_count:,}"),
-        ("Low-risk predictions", f"{distribution['LOW']:,}"),
-        ("High-risk predictions", f"{distribution['HIGH']:,}"),
+    render_section_heading(
+        "Portfolio summary",
+        "Prediction counts and risk bands describe saved model output, not every application in the dataset.",
     )
-    for column, (label, value) in zip(columns, metric_values):
-        with column:
-            render_metric(label, value)
-
-    bands = summary["risk_bands"]
-    st.caption(
-        f"Risk distribution uses actual saved {summary['prediction_split']} model output "
-        f"from `{summary['source']}`; it covers {prediction_count:,} scored "
-        "records, not every application in the source dataset. Risk bands are "
-        f"provisional model categories (LOW < {bands['low_upper']:.0%}, "
-        f"MEDIUM < {bands['medium_upper']:.0%}, HIGH otherwise), not lending decisions."
-    )
-
-    risk_column, outcomes_column = st.columns(2, gap="large")
-    with risk_column:
-        with st.container(border=True):
-            st.subheader("Risk distribution")
+    if metrics is not None:
+        summary = metrics
+        distribution = summary["risk_distribution"]
+        prediction_count = summary["prediction_count"]
+        render_metric_grid(
+            [
+                (
+                    "Applications available",
+                    f"{metrics['total_applications']:,}",
+                    "Application records available through the API.",
+                ),
+                (
+                    f"{summary['prediction_split'].title()} prediction records",
+                    f"{prediction_count:,}",
+                    "Rows represented in the saved prediction artifact; not the full application dataset.",
+                ),
+                (
+                    "Low-risk predictions",
+                    f"{distribution['LOW']:,}",
+                    "Saved records in the current artifact's LOW model band.",
+                ),
+                (
+                    "High-risk predictions",
+                    f"{distribution['HIGH']:,}",
+                    "Saved records in the current artifact's HIGH model band.",
+                ),
+            ]
+        )
+        bands = summary["risk_bands"]
+        st.caption(
+            f"Source: `{summary['source']}`. Provisional model bands: LOW < "
+            f"{bands['low_upper']:.0%}, MEDIUM < {bands['medium_upper']:.0%}, "
+            "HIGH otherwise. These categories are not lending decisions."
+        )
+        risk_column, outcomes_column = st.columns(2, gap="large")
+        with risk_column:
+            render_section_heading("Risk distribution")
             _render_risk_distribution(summary)
-    with outcomes_column:
-        with st.container(border=True):
-            st.subheader("Predicted outcome counts")
+        with outcomes_column:
+            render_section_heading("Predicted outcomes")
             outcomes = summary["predicted_outcomes"]
             outcome_data = pd.DataFrame(
                 [
-                    {
-                        "Model outcome": "No defined repayment difficulty",
-                        "Predictions": outcomes[
-                            "no_defined_repayment_difficulty"
-                        ],
-                    },
-                    {
-                        "Model outcome": "Repayment difficulty",
-                        "Predictions": outcomes["repayment_difficulty"],
-                    },
+                    {"Model outcome": "No defined repayment difficulty", "Records": outcomes["no_defined_repayment_difficulty"]},
+                    {"Model outcome": "Repayment difficulty", "Records": outcomes["repayment_difficulty"]},
                 ]
             )
             st.dataframe(outcome_data, use_container_width=True, hide_index=True)
             threshold = summary["decision_threshold"]
-            threshold_label = (
-                f"{threshold:.2f}" if threshold is not None else "unavailable"
-            )
+            threshold_label = f"{threshold:.2f}" if threshold is not None else "unavailable"
             st.caption(
-                f"Binary predictions use the saved model decision threshold "
-                f"({threshold_label}); these are model "
-                "classifications, not approval or rejection decisions."
+                f"Counts use the saved model threshold ({threshold_label}). These are model classifications, not credit decisions."
             )
 
-    st.subheader("Model evaluation")
-    st.caption(
-        f"Metrics are read from the backend evaluation artifact for the "
-        f"{results.attrs.get('split', summary['prediction_split'])} split."
-    )
-    _render_evaluation(results)
+    render_section_heading("Evaluation performance")
+    evaluation_split = metrics["prediction_split"] if metrics else "test"
+    results: pd.DataFrame | None = None
+    try:
+        with st.spinner("Loading saved evaluation metrics..."):
+            results = data_access.get_model_evaluation_results(evaluation_split)
+    except data_access.DataAccessError:
+        render_status(
+            "Evaluation metrics are unavailable.",
+            "No cached or illustrative scores are shown.",
+            kind="warning",
+        )
+    if results is not None:
+        split_label = results.attrs.get("split", evaluation_split)
+        st.caption(f"Saved evaluation artifact · {str(split_label).title()} split")
+        _render_evaluation(results)
+        provenance = results.attrs.get("provenance", {})
+        confusion = results.attrs.get("confusion_matrix")
+        if isinstance(confusion, dict):
+            with st.expander("Confusion matrix"):
+                _render_confusion_matrix(confusion, provenance)
+    else:
+        provenance = {}
 
-    provenance = results.attrs.get("provenance", {})
-    confusion = results.attrs.get("confusion_matrix")
-    if isinstance(confusion, dict):
-        with st.expander("Confusion matrix"):
-            matrix = pd.DataFrame(
-                [
-                    {
-                        "Actual": "No defined repayment difficulty",
-                        "Predicted no difficulty": confusion.get("tn"),
-                        "Predicted repayment difficulty": confusion.get("fp"),
-                    },
-                    {
-                        "Actual": "Repayment difficulty",
-                        "Predicted no difficulty": confusion.get("fn"),
-                        "Predicted repayment difficulty": confusion.get("tp"),
-                    },
-                ]
-            )
-            st.dataframe(matrix, use_container_width=True, hide_index=True)
-            st.caption(
-                "Counts are from the saved evaluation confusion matrix at "
-                f"threshold {confusion.get('threshold', provenance.get('threshold', 'N/A'))}."
-            )
-
-    st.subheader("Model metadata")
+    render_section_heading("Model metadata")
+    try:
+        model = data_access.get_model_info()
+    except data_access.DataAccessError:
+        render_status(
+            "Model metadata is unavailable.",
+            "The other Overview sections remain available when their data sources respond.",
+            kind="warning",
+        )
+        return
     thresholds = model.get("thresholds", {})
-    st.json(
-        {
-            "model_name": model.get("model_name"),
-            "model_version": model.get("model_version"),
-            "model_hash": model.get("model_hash"),
-            "training_date": model.get("training_date"),
-            "evaluation_split": results.attrs.get("split"),
-            "evaluation_generated_at": provenance.get("generated_at"),
-            "decision_threshold": thresholds.get("decision_threshold"),
-            "risk_bands": thresholds.get("risk_bands"),
-        }
-    )
+    metadata = {
+        "Model": model.get("model_name"),
+        "Version": model.get("model_version"),
+        "Artifact hash": model.get("model_hash"),
+        "Training date": model.get("training_date"),
+        "Evaluation split": results.attrs.get("split") if results is not None else None,
+        "Evaluation generated": provenance.get("generated_at"),
+        "Decision threshold": thresholds.get("decision_threshold"),
+        "Risk bands": thresholds.get("risk_bands"),
+    }
+    with st.expander("View metadata and evaluation provenance"):
+        st.json(metadata)
