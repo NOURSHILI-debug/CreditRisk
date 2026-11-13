@@ -360,8 +360,8 @@ Bands are returned as `risk_level` and exposed in `/models`:
 
 ```text
 LOW    probability < 0.30
-MEDIUM 0.30 <= probability < 0.70
-HIGH   probability >= 0.70
+MEDIUM 0.30 <= probability < 0.60
+HIGH   probability >= 0.60
 ```
 
 They are provisional, not validated lending thresholds, and must not drive
