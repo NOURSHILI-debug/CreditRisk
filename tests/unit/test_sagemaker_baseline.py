@@ -18,6 +18,23 @@ def test_launcher_pins_sagemaker_xgboost_image() -> None:
     assert config["image_uri"] == FRAMEWORK_IMAGE_URI
 
 
+def test_launcher_defaults_to_g5_and_reports_estimated_max_cost() -> None:
+    config = job_config()
+
+    assert config["instance_type"] == "ml.g5.xlarge"
+    assert config["max_run_seconds"] == 1200
+    assert config["use_spot_instances"] is False
+    assert config["estimated_hourly_rate_usd"] == 1.40
+    assert config["hourly_rate_is_estimate"] is True
+    assert config["max_estimated_compute_cost_usd"] == 0.47
+
+
+def test_launcher_accepts_instance_type_override() -> None:
+    config = job_config(instance_type="ml.g5.2xlarge")
+
+    assert config["instance_type"] == "ml.g5.2xlarge"
+
+
 def test_compute_ks_matches_roc_curve() -> None:
     truth = np.array([0, 0, 1, 1, 0, 1])
     probabilities = np.array([0.1, 0.4, 0.35, 0.8, 0.2, 0.7])
