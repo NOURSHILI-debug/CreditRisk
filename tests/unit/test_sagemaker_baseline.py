@@ -8,6 +8,14 @@ import pandas as pd
 from sklearn.metrics import roc_curve
 
 from training.train_xgboost import compute_ks
+from aws.sagemaker.run_sagemaker import FRAMEWORK_IMAGE_URI, job_config
+
+
+def test_launcher_pins_sagemaker_xgboost_image() -> None:
+    config = job_config()
+
+    assert config["framework_version"] == "3.2-0"
+    assert config["image_uri"] == FRAMEWORK_IMAGE_URI
 
 
 def test_compute_ks_matches_roc_curve() -> None:

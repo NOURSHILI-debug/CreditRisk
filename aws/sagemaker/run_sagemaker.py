@@ -14,6 +14,9 @@ OUTPUT_PREFIX = f"s3://{BUCKET}/reports/sagemaker_v1"
 MODEL_PREFIX = f"s3://{BUCKET}/models/sagemaker_v1"
 INSTANCE_TYPE = "ml.m5.large"
 FRAMEWORK_VERSION = "3.2-0"
+FRAMEWORK_IMAGE_URI = (
+    "683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-xgboost:3.2-0"
+)
 MAX_RUN_SECONDS = 1800
 # us-east-1 Linux On-Demand rate; excludes storage and data transfer.
 HOURLY_RATE_USD = 0.115
@@ -34,6 +37,7 @@ def job_config() -> dict[str, object]:
         "use_spot_instances": False,
         "framework": "sagemaker.xgboost.estimator.XGBoost",
         "framework_version": FRAMEWORK_VERSION,
+        "image_uri": FRAMEWORK_IMAGE_URI,
         "entry_point": "train.py",
         "source_dir": "aws/sagemaker",
         "dependencies": ["src"],
@@ -59,6 +63,7 @@ def launch(config: dict[str, object]) -> tuple[str, str, str]:
         dependencies=["src"],
         role=ROLE_ARN,
         framework_version=FRAMEWORK_VERSION,
+        image_uri=FRAMEWORK_IMAGE_URI,
         py_version="py3",
         instance_count=1,
         instance_type=INSTANCE_TYPE,
