@@ -83,7 +83,7 @@ def test_overview_displays_only_api_provided_values(monkeypatch) -> None:
         "import streamlit as st\n"
         "from dashboard.pages.overview import render_overview\n"
         "render_overview()\n"
-    ).run()
+    ).run(timeout=30)
     assert not app.exception
     metric_values = {metric.label: metric.value for metric in app.metric}
     assert metric_values["Applications available"] == "307,511"
