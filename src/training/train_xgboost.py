@@ -22,6 +22,7 @@ from sklearn.metrics import (
     f1_score,
     precision_score,
     recall_score,
+    roc_curve,
     roc_auc_score,
 )
 from sklearn.model_selection import train_test_split
@@ -177,6 +178,14 @@ def compute_metrics(
         "predicted_positive_rate": float(predictions.mean()),
         "observed_positive_rate": float(truth.mean()),
     }
+
+
+def compute_ks(y_true: pd.Series | np.ndarray, y_prob: np.ndarray) -> float:
+    """Return the maximum TPR-FPR separation over the ROC curve."""
+    false_positive_rate, true_positive_rate, _ = roc_curve(
+        np.asarray(y_true).astype(int), np.asarray(y_prob, dtype=float)
+    )
+    return float(np.max(true_positive_rate - false_positive_rate))
 
 
 def compare_to_baseline(test_metrics: dict[str, object]) -> dict[str, object]:
@@ -403,6 +412,10 @@ def train(
     test_probabilities = model.predict_proba(X_test_t)[:, 1]
     validation_metrics = compute_metrics(y_val, val_probabilities)
     test_metrics = compute_metrics(y_test, test_probabilities)
+    extra_metrics = {
+        "validation": {"ks": compute_ks(y_val, val_probabilities)},
+        "test": {"ks": compute_ks(y_test, test_probabilities)},
+    }
     log.info("Validation metrics at threshold %.2f: %s", THRESHOLD, validation_metrics)
     log.info("Test metrics at threshold %.2f: %s", THRESHOLD, test_metrics)
 
@@ -506,6 +519,10 @@ def train(
     }
     evaluation_path.write_text(
         json.dumps(evaluation, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "extra_metrics.json").write_text(
+        json.dumps(extra_metrics, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     training_metadata = {
