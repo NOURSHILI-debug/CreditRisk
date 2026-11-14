@@ -322,6 +322,12 @@ def get_model_comparison() -> dict[str, Any]:
         "split_protocol": _json_value(split_protocol)
         if split_protocol is not None
         else None,
+        "model_splits": _json_value(provenance.get("model_splits"))
+        if isinstance(provenance.get("model_splits"), Mapping)
+        else None,
+        "model_protocols": _json_value(provenance.get("model_protocols"))
+        if isinstance(provenance.get("model_protocols"), Mapping)
+        else None,
     }
 
     evaluations: list[dict[str, Any]] = []
@@ -383,58 +389,14 @@ def get_model_comparison() -> dict[str, Any]:
         status = "available"
         message = None
 
-    comparison_requirements = (
-        statuses["XGBoost"] == "Available"
-        and statuses["LSTM"] == "Available"
-        and split is not None
-        and isinstance(target, dict)
-        and target.get("name") == "TARGET"
-        and type(target.get("positive_class")) is int
-        and target.get("positive_class") == 1
-        and target.get("positive_label") == "repayment difficulty"
-        and target.get("probability_semantics") == "P(TARGET=1)"
-        and isinstance(metric_definitions, dict)
-        and all(
-            isinstance(metric_definitions.get(key), str)
-            and metric_definitions[key].strip()
-            for key in ("roc_auc", "pr_auc", "precision", "recall", "f1")
-        )
-        and threshold is not None
-        and sample_count is not None
-        and isinstance(class_counts, dict)
-        and {"0", "1"}.issubset(class_counts)
-        and sum(class_counts.values()) == sample_count
-        and isinstance(split_protocol, Mapping)
-        and bool(split_protocol)
+    comparison_available, comparison_note = data_access.model_comparison_validity(
+        statuses,
+        split,
+        provenance,
+        synthetic=source_mode == "mock",
     )
-    comparison_available = bool(comparison_requirements)
-    if comparison_available:
-        comparison_note = (
-            "Both models have complete evaluation results under the same "
-            "reported split, population, target convention, metric definitions, "
-            "and threshold."
-        )
-    elif statuses["XGBoost"] == "Not available" and statuses["LSTM"] == "Not available":
-        comparison_note = "No model evaluation results are available."
-    elif statuses["LSTM"] == "Not available":
-        comparison_note = (
-            "Only XGBoost evaluation results are available; LSTM evaluation "
-            "results are not provided by the API."
-        )
-    elif statuses["XGBoost"] == "Not available":
-        comparison_note = (
-            "Only LSTM evaluation results are available; XGBoost evaluation "
-            "results are not provided by the API."
-        )
-    elif statuses["XGBoost"] != "Available" or statuses["LSTM"] != "Available":
-        comparison_note = (
-            "A direct comparison requires complete metrics for both models."
-        )
-    else:
-        comparison_note = (
-            "Evaluation protocol metadata is incomplete, so direct comparability "
-            "cannot be confirmed."
-        )
+    if not comparison_available:
+        message = comparison_note
 
     response = {
         "status": status,
@@ -645,6 +607,45 @@ def explain_prediction(application_id: int | str) -> dict[str, Any]:
         return result
     if not isinstance(explanation, Mapping):
         return invalid_response()
+
+    if explanation.get("synthetic") is True:
+        if (
+            not data_access.is_mock_mode()
+            or explanation.get("method") != "illustrative_rules"
+            or not isinstance(explanation.get("top_features"), list)
+        ):
+            return invalid_response()
+        illustrative_features: list[dict[str, Any]] = []
+        for feature in explanation["top_features"]:
+            if not isinstance(feature, Mapping):
+                return invalid_response()
+            name = feature.get("raw_feature")
+            effect = feature.get("effect")
+            value = feature.get("raw_value")
+            if (
+                not isinstance(name, str)
+                or name.strip().upper() in {"TARGET", "SK_ID_CURR"}
+                or effect not in {"increases_risk", "decreases_risk", "neutral"}
+                or (
+                    value is not None
+                    and (isinstance(value, bool) or not isinstance(value, Real))
+                )
+            ):
+                return invalid_response()
+            illustrative_features.append(
+                {"feature": name, "raw_value": value, "effect": effect}
+            )
+        result.update(
+            status="available",
+            explanation_method="synthetic_illustrative",
+            output_space="not_applicable",
+            top_features=illustrative_features,
+            message=str(
+                explanation.get("summary")
+                or "Synthetic illustrative factors only; not SHAP."
+            ),
+        )
+        return result
 
     method = explanation.get("method")
     output_space = explanation.get("output_space")

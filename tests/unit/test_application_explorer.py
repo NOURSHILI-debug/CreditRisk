@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from dashboard import data_access
@@ -97,6 +98,36 @@ def test_prediction_view_renders_real_shap_factors_and_api_thresholds(
     ]
     assert any("LOW < 30%" in caption.value for caption in app.caption)
     assert "Ext Source 2" in app.dataframe[0].value.iloc[0, 0]
+
+
+@pytest.mark.parametrize(
+    ("status", "message", "expected_text", "element"),
+    [
+        ("no_prediction", "No saved result.", "No prediction is available", "warning"),
+        ("model_unavailable", "Model artifacts unavailable.", "Model artifacts unavailable", "warning"),
+        ("unavailable", "Application data unavailable.", "Application data unavailable", "warning"),
+        ("not_found", "Unknown application.", "Unknown application", "warning"),
+        ("invalid", "Invalid API response.", "Invalid API response", "error"),
+    ],
+)
+def test_prediction_view_distinguishes_api_statuses_without_zero_scores(
+    status: str, message: str, expected_text: str, element: str
+) -> None:
+    app = AppTest.from_string(
+        "from dashboard.data_access import CreditRiskPrediction\n"
+        "from dashboard.pages.application_explorer import _render_prediction_result\n"
+        f"_render_prediction_result(CreditRiskPrediction(status={status!r}, message={message!r}))\n"
+    ).run()
+
+    assert not app.exception
+    rendered = " ".join(
+        item.value
+        for item in (*app.warning, *app.error)
+        if isinstance(item.value, str)
+    )
+    assert expected_text in rendered
+    assert len(getattr(app, element)) > 0
+    assert not app.metric
 
 
 def test_unavailable_api_is_reported_without_sample_applicants(monkeypatch) -> None:

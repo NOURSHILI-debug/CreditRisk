@@ -52,9 +52,9 @@ It is computed on the training split only and passed to `XGBClassifier`.
 
 ## Confidence intervals
 
-Confidence intervals are produced by bootstrap resampling on the test set. Each
-metric is reported with its bootstrap interval. The test labels are not used to
-change the model.
+The current training implementation does not calculate or save bootstrap
+confidence intervals. Do not report confidence intervals until an implementation
+and corresponding saved results are added and verified.
 
 ## Results location
 

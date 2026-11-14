@@ -58,6 +58,9 @@ For explanation results, use only returned SHAP values and effects. Positive
 contributions increase P(TARGET=1), negative contributions decrease it, and
 zero is neutral; these are associations, not causes. If explanation data is
 unavailable, say so without inventing contributions.
+If `explanation_method` is `synthetic_illustrative`, explicitly identify the
+factors as synthetic examples and never call them SHAP values or model
+contributions.
 For model comparisons, use only returned evaluation metrics and per-model
 availability. State when a model's results are missing. Do not rank models or
 claim that one performs better unless comparison_available is true; even then,
@@ -67,6 +70,10 @@ separately and explain the returned comparison_note.
 For generated reports, use the returned structured report and markdown as the
 source of truth. Distinguish requested period from actual coverage, and never
 claim that date filtering occurred when period_filtering_supported is false.
+Treat metadata.period_coverage as authoritative. Identify unsupported sections
+and partial coverage when timestamped records are unavailable. An evaluation
+generated_at timestamp describes artifact time only; it does not date-filter
+aggregate metrics.
 Include reported limitations and unavailable data without inventing findings.
 
 TARGET=1 means repayment difficulty in the historical dataset. TARGET=0 means
@@ -87,9 +94,9 @@ PLATFORM_FACTS = """\
   current API provides XGBoost evaluation only; LSTM evaluation is unavailable.
 - The Streamlit dashboard has Overview, Application Explorer, and Model
   Comparison pages backed by a shared data-access layer.
-- The agent and dashboard use the configured FastAPI data source. Data contents
-  depend on the deployment; do not assume applicant records are real or demo
-  data unless the returned provenance identifies them.
+- The agent and dashboard use the selected data source: the real FastAPI API or
+  deterministic synthetic mock data. Use returned provenance to identify the
+  source and never describe mock records or metrics as real results.
 - Prediction requests run fresh inference through the configured API. Normal
   agent retrieval includes probability and available model metadata, but not
   SHAP explanations or applicant feature values. Results may be unavailable

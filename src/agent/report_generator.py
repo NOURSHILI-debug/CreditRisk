@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from dashboard import data_access
@@ -94,6 +94,39 @@ def _get_model_comparison() -> dict[str, Any]:
     return get_model_comparison()
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _period_window(period: str, reference_time: datetime) -> tuple[datetime | None, datetime | None]:
+    """Return an inclusive UTC window; None bounds represent the all-data scope."""
+    end = (
+        reference_time.replace(tzinfo=timezone.utc)
+        if reference_time.tzinfo is None
+        else reference_time.astimezone(timezone.utc)
+    )
+    if period == "all":
+        return None, None
+    return end - timedelta(days=int(period[:-1])), end
+
+
+def _coverage_section(
+    *,
+    timestamp_field: str | None,
+    recorded_at: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "unsupported",
+        "records_included": None,
+        "timestamp_field": timestamp_field,
+        "recorded_at": recorded_at,
+        "reason": (
+            "The source provides an aggregate or snapshot without timestamped records "
+            "and a period filter; the requested period was not applied."
+        ),
+    }
+
+
 def _markdown(report: Mapping[str, Any]) -> str:
     metadata = report["metadata"]
     apps = report["application_statistics"]
@@ -121,6 +154,11 @@ def _markdown(report: Mapping[str, Any]) -> str:
         "",
         "## Model evaluation",
     ]
+    if metadata.get("source_mode") == "mock":
+        lines.insert(
+            3,
+            "**Synthetic mock report:** application records and predictions are generated examples. No trained-model evaluation results are available.",
+        )
     for model in ("XGBoost", "LSTM"):
         status = evaluation.get("statuses", {}).get(model, "Not available")
         lines.append(f"- {model} ({status}): {evaluation.get('models', {}).get(model)}")
@@ -130,6 +168,22 @@ def _markdown(report: Mapping[str, Any]) -> str:
         "",
         "## Data quality and limitations",
     ])
+    coverage = metadata.get("period_coverage", {})
+    lines.extend(
+        [
+            "",
+            "## Period coverage",
+            f"- Coverage status: {coverage.get('status', 'unavailable')}",
+            f"- UTC window: {coverage.get('window_start') or 'not bounded'} to {coverage.get('window_end') or 'not bounded'}",
+        ]
+    )
+    for section, details in coverage.get("sections", {}).items():
+        if isinstance(details, Mapping):
+            lines.append(
+                f"- {section}: {details.get('status')}; records included: "
+                f"{details.get('records_included') if details.get('records_included') is not None else 'unknown'}; "
+                f"{details.get('reason', 'No coverage detail available.')}"
+            )
     quality = report["data_quality"]
     lines.extend(f"- {item}" for item in quality["limitations"])
     lines.extend(f"- Missing source: {item}" for item in quality["missing_data"])
@@ -141,6 +195,8 @@ def generate_report(period: str) -> dict[str, Any]:
     if not isinstance(period, str) or period not in SUPPORTED_PERIODS:
         raise ValueError(f"period must be one of: {', '.join(SUPPORTED_PERIODS)}.")
 
+    generated_at = _utc_now()
+    window_start, window_end = _period_window(period, generated_at)
     application_result, application_error = _retrieve(_application_count_only)
     prediction_result, prediction_error = _retrieve(data_access.get_prediction_summary)
     comparison_result, evaluation_error = _retrieve(_get_model_comparison)
@@ -157,9 +213,42 @@ def generate_report(period: str) -> dict[str, Any]:
         missing.append("saved prediction summary")
     if comparison_result is None or evaluation_payload["status"] in {"unavailable", "error", "invalid"}:
         missing.append("model evaluation")
+    evaluation_metadata = evaluation_payload.get("evaluation_metadata")
+    evaluation_recorded_at = (
+        evaluation_metadata.get("generated_at")
+        if isinstance(evaluation_metadata, Mapping)
+        else None
+    )
+    if isinstance(evaluation_recorded_at, str):
+        try:
+            parsed_timestamp = datetime.fromisoformat(
+                evaluation_recorded_at.replace("Z", "+00:00")
+            )
+            if parsed_timestamp.tzinfo is None:
+                parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
+            evaluation_recorded_at = parsed_timestamp.astimezone(timezone.utc).isoformat()
+        except ValueError:
+            evaluation_recorded_at = None
+    else:
+        evaluation_recorded_at = None
+    period_coverage = {
+        "status": "partial",
+        "timezone": "UTC",
+        "window_start": window_start.isoformat() if window_start else None,
+        "window_end": window_end.isoformat() if window_end else None,
+        "sections": {
+            "application_statistics": _coverage_section(timestamp_field=None),
+            "prediction_statistics": _coverage_section(timestamp_field=None),
+            "model_evaluation": _coverage_section(
+                timestamp_field="generated_at",
+                recorded_at=evaluation_recorded_at,
+            ),
+        },
+    }
     limitations = [
-        "The requested period cannot be applied: application, saved prediction, and evaluation sources do not provide compatible event timestamps or period filters.",
-        "Actual coverage is the source snapshot or named historical split, not a rolling window or complete lifetime history.",
+        "The requested period was not applied: the application snapshot and saved prediction summary contain no timestamped records or period filters.",
+        "An evaluation generated_at timestamp describes artifact time only; it does not date-filter aggregate metrics by prediction or application date.",
+        "Actual coverage is limited to the available application snapshot and named historical split; complete lifetime coverage is not established.",
         "TARGET counts and proportions are unavailable because the application API field allowlist excludes TARGET.",
         "Average predicted probability is unavailable because the aggregate prediction API does not return probabilities.",
         "Fresh per-application inference is not a saved historical prediction and is not included in these statistics.",
@@ -186,21 +275,23 @@ def generate_report(period: str) -> dict[str, Any]:
     available_count = sum(
         (application_payload is not None, prediction_payload is not None, evaluation_available)
     )
-    source_statuses = (
-        application_section["status"] == "available",
-        prediction_section["status"] == "available",
-        evaluation_available,
-    )
-    status = "complete" if all(source_statuses) else "partial" if available_count else "unavailable"
+    # Source retrieval can be successful while temporal coverage is unsupported.
+    status = "partial" if available_count else "unavailable"
     report: dict[str, Any] = {
         "status": status,
+        "source_mode": data_access.get_provider_name(),
         "metadata": {
             "report_type": "credit_risk",
             "title": "Credit Risk Intelligence Report",
             "requested_period": period,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "actual_coverage": "Current API application snapshot plus the explicitly named historical prediction/evaluation split(s); this is not a rolling window, and date coverage is not established.",
+            "generated_at": generated_at.isoformat(),
+            "actual_coverage": (
+                "Deterministic synthetic applicant sample and illustrative predictions; no trained evaluation results or real historical coverage are available."
+                if data_access.is_mock_mode()
+                else "Current API application snapshot plus named historical prediction/evaluation split(s); no date filtering was applied because record timestamps and period filters are unavailable."
+            ),
             "period_filtering_supported": False,
+            "period_coverage": period_coverage,
             "sources": sources,
             "source_mode": data_access.get_provider_name(),
         },

@@ -835,7 +835,7 @@ def build_agent_graph(
                     f"{note if isinstance(note, str) and note else ''}"
                 )
             if source_mode == "mock":
-                prefix += " The configured source is labeled mock/demo data."
+                prefix += " The source is synthetic mock/demo data, for illustration only."
             answer = (
                 f"{prefix}\n"
                 f"{json.dumps(redact_applicant_identifier_fields(tool_result), ensure_ascii=False, indent=2, allow_nan=False)}"
@@ -850,7 +850,7 @@ def build_agent_graph(
             if status == "invalid":
                 prefix = "The retrieved result was invalid and cannot be interpreted."
             if source_mode == "mock":
-                prefix += " The configured source is labeled mock/demo data."
+                prefix += " The source is synthetic mock/demo data, for illustration only."
             message = tool_result.get("message")
             answer = f"{prefix} {message}" if isinstance(message, str) and message else prefix
             return {
@@ -882,9 +882,11 @@ def build_agent_graph(
             if (
                 tool_result is not None
                 and tool_result.get("source_mode") == "mock"
-                and not answer.lower().startswith(("mock", "demo"))
+                and not answer.lower().startswith(
+                    "synthetic mock/demo data (illustrative only):"
+                )
             ):
-                answer = f"Mock/demo data: {answer}"
+                answer = f"Synthetic mock/demo data (illustrative only): {answer}"
         except AgentConfigurationError:
             raise
         except Exception as error:

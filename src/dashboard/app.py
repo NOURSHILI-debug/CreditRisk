@@ -18,6 +18,29 @@ from dashboard import data_access
 from dashboard.components.theme import inject_styles
 
 
+def _render_data_source_selector() -> str:
+    try:
+        default_mode = data_access.configured_data_mode()
+    except data_access.DataModeConfigurationError as error:
+        st.sidebar.error(str(error))
+        st.stop()
+    if st.session_state.get("credit_risk_data_mode") not in {"api", "mock"}:
+        st.session_state["credit_risk_data_mode"] = default_mode
+    mode = st.sidebar.selectbox(
+        "Data source",
+        options=["api", "mock"],
+        format_func=lambda value: "Real API" if value == "api" else "Synthetic mock data",
+        key="credit_risk_data_mode",
+        help="Choose the real FastAPI backend or deterministic synthetic demo data.",
+    )
+    data_access.set_data_mode(mode)
+    if mode == "mock":
+        st.sidebar.warning(
+            "Mock mode active. All displayed records and metrics are synthetic examples; no API requests are made."
+        )
+    return mode
+
+
 def main() -> None:
     """Initialize the dashboard application and handle page navigation."""
     st.set_page_config(
@@ -29,21 +52,23 @@ def main() -> None:
 
     st.sidebar.markdown("## CREDIT RISK")
     st.sidebar.caption("INTELLIGENCE PLATFORM")
-    st.sidebar.markdown("### Local API status")
-    try:
-        health = data_access.get_api_health()
-    except data_access.DataAccessError:
-        st.sidebar.error("API disconnected. Start the local service and refresh.")
-    else:
-        if health.get("status") == "ok":
-            st.sidebar.success(
-                f"API connected | {health.get('model_name') or 'model unavailable'} "
-                f"{health.get('model_version') or ''}"
-            )
+    mode = _render_data_source_selector()
+    if mode == "api":
+        st.sidebar.markdown("### Local API status")
+        try:
+            health = data_access.get_api_health()
+        except data_access.DataAccessError:
+            st.sidebar.error("API disconnected. Start the local service and refresh.")
         else:
-            st.sidebar.warning(
-                "API connected but degraded: model or application data is unavailable."
-            )
+            if health.get("status") == "ok":
+                st.sidebar.success(
+                    f"API connected | {health.get('model_name') or 'model unavailable'} "
+                    f"{health.get('model_version') or ''}"
+                )
+            else:
+                st.sidebar.warning(
+                    "API connected but degraded: model or application data is unavailable."
+                )
     if st.sidebar.button("Refresh data", help="Reload this page and its live data"):
         st.rerun()
 

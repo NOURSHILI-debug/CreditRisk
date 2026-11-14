@@ -258,6 +258,49 @@ def test_model_comparison_enables_comparison_only_with_shared_protocol_metadata(
     _assert_json(result)
 
 
+def test_model_comparison_rejects_incompatible_model_splits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = pd.DataFrame(
+        [
+            {"model": model, "metric": metric, "value": index / 10}
+            for model in ("XGBoost", "LSTM")
+            for index, metric in enumerate(data_access.MODEL_METRICS, start=1)
+        ]
+    )
+    rows.attrs["split"] = "test"
+    rows.attrs["provenance"] = {
+        "model_splits": {"XGBoost": "test", "LSTM": "validation"},
+        "target": {
+            "name": "TARGET",
+            "positive_class": 1,
+            "positive_label": "repayment difficulty",
+            "probability_semantics": "P(TARGET=1)",
+        },
+        "metric_definitions": {
+            key: "defined" for key in ("roc_auc", "pr_auc", "precision", "recall", "f1")
+        },
+        "threshold": 0.5,
+        "n_samples": 100,
+        "class_counts": {"0": 80, "1": 20},
+        "split_protocol": {"method": "stratified holdout"},
+    }
+    monkeypatch.setattr(
+        tools.data_access, "get_model_evaluation_results", lambda: rows
+    )
+
+    result = tools.get_model_comparison()
+
+    assert result["statuses"] == {"XGBoost": "Available", "LSTM": "Available"}
+    assert result["comparison_available"] is False
+    assert "different or unrecorded evaluation splits" in result["comparison_note"]
+    assert result["evaluation_metadata"]["model_splits"] == {
+        "XGBoost": "test",
+        "LSTM": "validation",
+    }
+    _assert_json(result)
+
+
 @pytest.mark.parametrize(
     "rows",
     [None, pd.DataFrame(columns=["model", "metric", "value"])],
@@ -1215,7 +1258,7 @@ def test_successful_mock_results_are_labeled_even_if_model_omits_provenance(
     )
 
     assert state["status"] == "answered"
-    assert state["final_response"].startswith("Mock/demo data:")
+    assert state["final_response"].startswith("Synthetic mock/demo data (illustrative only):")
     assert "120 applications" in state["final_response"]
 
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import os
 import re
+from contextvars import ContextVar
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -17,6 +19,7 @@ from dashboard.api_client import (
     APIResponseError,
     APIUnavailableError,
 )
+from dashboard.providers import mock_provider
 
 APPLICATION_ID_COLUMN = "SK_ID_CURR"
 MODEL_METRICS = ("ROC-AUC", "PR-AUC", "Precision", "Recall", "F1-score")
@@ -50,12 +53,56 @@ def _client() -> APIClient:
     return APIClient()
 
 
+def _mock_call(function: Any, *args: Any, **kwargs: Any) -> Any:
+    try:
+        return function(*args, **kwargs)
+    except mock_provider.MockConfigurationError as error:
+        raise DataModeConfigurationError(str(error)) from error
+    except mock_provider.MockProviderError as error:
+        raise MalformedProviderResponseError(str(error)) from error
+
+
+class DataModeConfigurationError(DataAccessError, ValueError):
+    """The configured dashboard data mode is unsupported."""
+
+
+_DATA_MODE_OVERRIDE: ContextVar[str | None] = ContextVar(
+    "credit_risk_data_mode_override", default=None
+)
+_DATA_MODES = {"api", "mock"}
+
+
+def configured_data_mode() -> str:
+    """Read the initial mode from the environment without a silent fallback."""
+    mode = os.environ.get("CREDIT_RISK_DATA_MODE", "api").strip().lower()
+    if mode not in _DATA_MODES:
+        raise DataModeConfigurationError(
+            "CREDIT_RISK_DATA_MODE must be either 'api' or 'mock'."
+        )
+    return mode
+
+
+def set_data_mode(mode: str) -> None:
+    """Set the active mode for the current Streamlit run/request context."""
+    normalized = mode.strip().lower() if isinstance(mode, str) else ""
+    if normalized not in _DATA_MODES:
+        raise DataModeConfigurationError(
+            "Data mode must be either 'api' or 'mock'."
+        )
+    _DATA_MODE_OVERRIDE.set(normalized)
+
+
+def get_data_mode() -> str:
+    mode = _DATA_MODE_OVERRIDE.get()
+    return mode if mode is not None else configured_data_mode()
+
+
 def get_provider_name() -> str:
-    return "fastapi"
+    return "mock" if is_mock_mode() else "fastapi"
 
 
 def is_mock_mode() -> bool:
-    return False
+    return get_data_mode() == "mock"
 
 
 ApplicationLookupStatus = Literal[
@@ -203,6 +250,8 @@ def _raise_data_error(error: APIClientError) -> None:
 
 
 def get_api_health() -> dict[str, Any]:
+    if is_mock_mode():
+        return _mock_call(mock_provider.get_health)
     try:
         payload = _client().health()
     except APIClientError as error:
@@ -221,6 +270,16 @@ def get_applications_page(
     filter_field: str | None = None,
     filter_value: str | None = None,
 ) -> tuple[pd.DataFrame, int]:
+    if is_mock_mode():
+        return _mock_call(
+            mock_provider.get_applications_page,
+            limit=limit,
+            offset=offset,
+            fields=fields,
+            application_id=application_id,
+            filter_field=filter_field,
+            filter_value=filter_value,
+        )
     try:
         payload = _client().list_applications(
             limit=limit,
@@ -259,6 +318,13 @@ def get_application_by_id(
     app_id = parse_application_id(application_id)
     if app_id is None:
         return ApplicationLookupResult(status="invalid_id")
+    if is_mock_mode():
+        frame, _ = _mock_call(
+            mock_provider.get_applications_page, limit=1, offset=0, application_id=app_id
+        )
+        if frame.empty:
+            return ApplicationLookupResult(status="not_found")
+        return ApplicationLookupResult("found", frame.iloc[0].copy())
     if applications is not None:
         if not isinstance(applications, pd.DataFrame):
             raise MalformedProviderResponseError(
@@ -311,6 +377,24 @@ def get_credit_risk_prediction(
             status="invalid",
             message="A valid application ID is required for prediction lookup.",
         )
+    if is_mock_mode():
+        applications, _ = _mock_call(
+            mock_provider.get_applications_page,
+            limit=1,
+            offset=0,
+            application_id=parsed_id,
+        )
+        if applications.empty:
+            return CreditRiskPrediction(
+                status="not_found", message="Application was not found in synthetic data."
+            )
+        return _mock_call(
+            lambda: normalize_prediction_response(
+                mock_provider.get_prediction(
+                    parsed_id, include_explanation=include_explanation
+                )
+            )
+        )
     try:
         response = _client().predict(
             parsed_id, include_explanation=include_explanation
@@ -355,6 +439,8 @@ def get_credit_risk_prediction(
 
 
 def get_model_info() -> dict[str, Any]:
+    if is_mock_mode():
+        return _mock_call(mock_provider.get_model_info)
     try:
         payload = _client().model_info()
     except APIClientError as error:
@@ -365,6 +451,8 @@ def get_model_info() -> dict[str, Any]:
 
 
 def get_prediction_summary(split: str = "test") -> dict[str, Any]:
+    if is_mock_mode():
+        return _mock_call(mock_provider.get_prediction_summary, split)
     try:
         payload = _client().prediction_summary(split)
     except APIClientError as error:
@@ -395,6 +483,8 @@ def get_overview_metrics(applications: pd.DataFrame | None = None) -> dict[str, 
 
 
 def get_model_evaluation_results(split: str = "test") -> pd.DataFrame:
+    if is_mock_mode():
+        return _mock_call(mock_provider.get_model_evaluation_results, split)
     try:
         payload = _client().evaluation(split)
     except APIClientError as error:
@@ -476,4 +566,101 @@ def normalize_model_evaluation_results(
             statuses[model] = f"Partially available ({count}/{len(MODEL_METRICS)} metrics)"
         else:
             statuses[model] = "Invalid or incomplete results"
+    provenance = results.attrs.get("provenance") if results is not None else None
+    if (
+        isinstance(provenance, Mapping)
+        and provenance.get("lstm_available") is False
+        and "LSTM" in supplied_models
+    ):
+        values["LSTM"] = {metric: None for metric in MODEL_METRICS}
+        statuses["LSTM"] = "Invalid results"
+        issues.append(
+            "LSTM metric rows conflict with provenance stating LSTM is unavailable."
+        )
     return values, statuses, issues
+
+
+def model_comparison_validity(
+    statuses: Mapping[str, str],
+    split: str | None,
+    provenance: Mapping[str, Any],
+    *,
+    synthetic: bool = False,
+) -> tuple[bool, str]:
+    """Decide whether the supplied model results support a direct comparison."""
+    if synthetic or provenance.get("synthetic") is True:
+        return (
+            False,
+            "Synthetic demo data does not contain trained-model evaluation results.",
+        )
+    if statuses.get("XGBoost") != "Available" or statuses.get("LSTM") != "Available":
+        if statuses.get("XGBoost") == "Not available" and statuses.get("LSTM") == "Not available":
+            return False, "No model evaluation results are available."
+        if statuses.get("LSTM") == "Not available":
+            return False, "Only XGBoost evaluation results are available; LSTM evaluation results are not provided by the API."
+        if statuses.get("XGBoost") == "Not available":
+            return False, "Only LSTM evaluation results are available; XGBoost results are unavailable."
+        return False, "A direct comparison requires all supported metrics for both models."
+
+    model_splits = provenance.get("model_splits")
+    if isinstance(model_splits, Mapping):
+        recorded = [model_splits.get(name) for name in ("XGBoost", "LSTM")]
+        if any(value != split for value in recorded):
+            return False, "The models use different or unrecorded evaluation splits."
+
+    model_protocols = provenance.get("model_protocols")
+    if isinstance(model_protocols, Mapping):
+        xgb_protocol = model_protocols.get("XGBoost")
+        lstm_protocol = model_protocols.get("LSTM")
+        if not isinstance(xgb_protocol, Mapping) or not isinstance(lstm_protocol, Mapping):
+            return False, "Model-specific evaluation protocols are incomplete."
+        if _json_safe_protocol(xgb_protocol) != _json_safe_protocol(lstm_protocol):
+            return False, "The models use incompatible evaluation protocols."
+
+    target = provenance.get("target")
+    definitions = provenance.get("metric_definitions")
+    protocol = provenance.get("split_protocol")
+    threshold = provenance.get("threshold")
+    sample_count = provenance.get("n_samples")
+    class_counts = provenance.get("class_counts")
+    compatible = (
+        split is not None
+        and isinstance(target, Mapping)
+        and target.get("name") == "TARGET"
+        and type(target.get("positive_class")) is int
+        and target.get("positive_class") == 1
+        and target.get("positive_label") == "repayment difficulty"
+        and target.get("probability_semantics") == "P(TARGET=1)"
+        and isinstance(definitions, Mapping)
+        and all(
+            isinstance(definitions.get(key), str) and definitions[key].strip()
+            for key in ("roc_auc", "pr_auc", "precision", "recall", "f1")
+        )
+        and isinstance(threshold, Real)
+        and not isinstance(threshold, bool)
+        and math.isfinite(float(threshold))
+        and 0.0 <= float(threshold) <= 1.0
+        and isinstance(sample_count, Integral)
+        and not isinstance(sample_count, bool)
+        and sample_count > 0
+        and isinstance(class_counts, Mapping)
+        and {"0", "1"}.issubset(class_counts)
+        and all(
+            isinstance(value, Integral) and not isinstance(value, bool) and value >= 0
+            for value in class_counts.values()
+        )
+        and sum(class_counts.values()) == sample_count
+        and isinstance(protocol, Mapping)
+        and bool(protocol)
+    )
+    if not compatible:
+        return False, "Evaluation protocol metadata is incomplete, so direct comparability cannot be confirmed."
+    return (
+        True,
+        "Both models have complete results under the same reported split, population, target convention, metric definitions, and threshold.",
+    )
+
+
+def _json_safe_protocol(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize nested protocol metadata for reliable equality checks."""
+    return {str(key): item for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))}

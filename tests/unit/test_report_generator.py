@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
@@ -42,7 +43,10 @@ def _sources(monkeypatch: pytest.MonkeyPatch) -> None:
         for metric in data_access.MODEL_METRICS
     ])
     frame.attrs["split"] = "test"
-    frame.attrs["provenance"] = {"source": "evaluation_results.json"}
+    frame.attrs["provenance"] = {
+        "source": "evaluation_results.json",
+        "generated_at": "2026-11-01T12:00:00Z",
+    }
     monkeypatch.setattr(data_access, "get_model_evaluation_results", lambda: frame)
     monkeypatch.setattr(data_access, "get_provider_name", lambda: "fastapi")
 
@@ -52,13 +56,74 @@ def test_generate_report_valid_periods_are_explicit_about_coverage(
     monkeypatch: pytest.MonkeyPatch, period: str
 ) -> None:
     _sources(monkeypatch)
+    reference_time = datetime(2026, 11, 14, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(report_generator, "_utc_now", lambda: reference_time)
     result = report_generator.generate_report(period)
     assert result["metadata"]["requested_period"] == period
     assert result["metadata"]["period_filtering_supported"] is False
     assert result["prediction_statistics"]["provenance"] == "saved_historical_split_predictions"
-    assert "not a rolling window" in result["metadata"]["actual_coverage"]
+    coverage = result["metadata"]["period_coverage"]
+    assert coverage["status"] == "partial"
+    assert coverage["timezone"] == "UTC"
+    assert coverage["sections"]["application_statistics"]["records_included"] is None
+    assert coverage["sections"]["prediction_statistics"]["timestamp_field"] is None
+    assert coverage["sections"]["model_evaluation"]["recorded_at"] == "2026-11-01T12:00:00+00:00"
+    if period == "all":
+        assert coverage["window_start"] is None
+        assert coverage["window_end"] is None
+    else:
+        days = int(period[:-1])
+        assert coverage["window_start"] == (reference_time - timedelta(days=days)).isoformat()
+        assert coverage["window_end"] == reference_time.isoformat()
+    assert "not applied" in result["markdown"]
+    assert result["status"] == "partial"
     assert result["application_statistics"]["target_counts"] is None
     json.dumps(result, allow_nan=False)
+
+
+def test_report_does_not_treat_evaluation_timestamp_as_metric_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _sources(monkeypatch)
+    monkeypatch.setattr(
+        report_generator,
+        "_utc_now",
+        lambda: datetime(2026, 11, 14, 12, tzinfo=timezone.utc),
+    )
+    result = report_generator.generate_report("7d")
+    section = result["metadata"]["period_coverage"]["sections"]["model_evaluation"]
+    assert section["recorded_at"] == "2026-11-01T12:00:00+00:00"
+    assert section["records_included"] is None
+    assert section["status"] == "unsupported"
+    assert "artifact time only" in " ".join(result["data_quality"]["limitations"])
+
+
+def test_invalid_evaluation_timestamp_is_reported_as_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _sources(monkeypatch)
+    frame = pd.DataFrame([{"model": "XGBoost", "metric": "ROC-AUC", "value": 0.8}])
+    frame.attrs["split"] = "test"
+    frame.attrs["provenance"] = {"generated_at": "not-a-timestamp"}
+    monkeypatch.setattr(data_access, "get_model_evaluation_results", lambda: frame)
+    result = report_generator.generate_report("30d")
+    assert result["metadata"]["period_coverage"]["sections"]["model_evaluation"]["recorded_at"] is None
+
+
+def test_empty_source_counts_remain_valid_zero_but_period_coverage_is_partial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _sources(monkeypatch)
+    monkeypatch.setattr(data_access, "get_applications_page", lambda **_: (pd.DataFrame(), 0))
+    monkeypatch.setattr(
+        data_access,
+        "get_prediction_summary",
+        lambda: {"prediction_count": 0, "split": "test", "source": "empty"},
+    )
+    result = report_generator.generate_report("all")
+    assert result["application_statistics"]["total_applications"] == 0
+    assert result["prediction_statistics"]["prediction_count"] == 0
+    assert result["status"] == "partial"
 
 
 def test_invalid_period_rejected() -> None:
