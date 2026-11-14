@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -70,6 +72,16 @@ def test_sidebar_mode_selector_persists_and_switches_provider(monkeypatch) -> No
     assert not app.exception
     assert app.session_state["credit_risk_data_mode"] == "mock"
     assert "mock" in [item.value for item in app.markdown]
+
+
+def test_dashboard_entrypoint_launches_in_explicit_mock_mode() -> None:
+    entrypoint = Path(__file__).parents[2] / "src" / "dashboard" / "app.py"
+    app = AppTest.from_file(entrypoint, default_timeout=30).run()
+
+    assert not app.exception
+    assert app.title[0].value == "Credit Risk Overview"
+    assert app.session_state["credit_risk_data_mode"] == "mock"
+    assert any("Synthetic mock mode" in item.value for item in app.warning)
 
 
 def test_mock_sample_is_reproducible_and_has_home_credit_fields() -> None:
