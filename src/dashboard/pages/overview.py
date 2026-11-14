@@ -47,7 +47,7 @@ def _render_risk_distribution(summary: dict[str, Any]) -> None:
     fig.update_layout(showlegend=False, yaxis_title="Saved prediction records")
     fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{x}<br>%{y:,} records<extra></extra>")
     style_chart(fig, height=330)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_evaluation(results: pd.DataFrame) -> None:
@@ -60,7 +60,7 @@ def _render_evaluation(results: pd.DataFrame) -> None:
     )
     st.dataframe(
         display.rename(columns={"model": "Model", "metric": "Metric", "value": "Score"}),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Model": st.column_config.TextColumn("Model", width="small"),
@@ -88,7 +88,7 @@ def _render_confusion_matrix(confusion: object, provenance: dict[str, Any]) -> N
             },
         ]
     )
-    st.dataframe(matrix, use_container_width=True, hide_index=True)
+    st.dataframe(matrix, width="stretch", hide_index=True)
     threshold = confusion.get("threshold", provenance.get("threshold"))
     threshold_label = f"{threshold:.3g}" if isinstance(threshold, (int, float)) else "not recorded"
     st.caption(f"Actual classes are rows; model predictions are columns. Saved probability threshold: {threshold_label}.")
@@ -99,6 +99,11 @@ def render_overview() -> None:
         "Credit Risk Overview",
         "A concise view of the available application portfolio, saved risk indicators, and model evaluation.",
     )
+    mock_mode = data_access.is_mock_mode()
+    if mock_mode:
+        st.warning(
+            "Synthetic mock mode: application records, predictions, and evaluation values are illustrative and are not real outcomes or trained-model results."
+        )
 
     # API reachability and artifact readiness are separate states.
     health: dict[str, Any] | None = None
@@ -108,10 +113,11 @@ def render_overview() -> None:
         pass
 
     health_columns = st.columns(3, gap="medium")
+    source_name = "Synthetic provider" if mock_mode else "API connection"
     health_values = (
-        ("API connection", "Unavailable" if health is None else "Connected"),
+        (source_name, "Ready" if mock_mode and health is not None else "Unavailable" if health is None else "Connected"),
         (
-            "Application data",
+            "Synthetic applications" if mock_mode else "Application data",
             "Status unavailable"
             if health is None
             else "Available"
@@ -119,7 +125,7 @@ def render_overview() -> None:
             else "Unavailable",
         ),
         (
-            "Model artifacts",
+            "Demo outputs" if mock_mode else "Model artifacts",
             "Status unavailable"
             if health is None
             else "Loaded"
@@ -158,12 +164,12 @@ def render_overview() -> None:
                 (
                     "Applications available",
                     f"{metrics['total_applications']:,}",
-                    "Application records available through the API.",
+                    "Synthetic applicant records for demonstration." if mock_mode else "Application records available through the API.",
                 ),
                 (
                     f"{summary['prediction_split'].title()} prediction records",
                     f"{prediction_count:,}",
-                    "Rows represented in the saved prediction artifact; not the full application dataset.",
+                    "Synthetic illustrative predictions; not trained-model output." if mock_mode else "Rows represented in the saved prediction artifact; not the full application dataset.",
                 ),
                 (
                     "Low-risk predictions",
@@ -179,7 +185,9 @@ def render_overview() -> None:
         )
         bands = summary["risk_bands"]
         st.caption(
-            f"Source: `{summary['source']}`. Provisional model bands: LOW < "
+            f"Source: `{summary['source']}`. "
+            + ("Synthetic illustrative bands: " if mock_mode else "Provisional model bands: ")
+            + "LOW < "
             f"{bands['low_upper']:.0%}, MEDIUM < {bands['medium_upper']:.0%}, "
             "HIGH otherwise. These categories are not lending decisions."
         )
@@ -201,7 +209,7 @@ def render_overview() -> None:
                     {"Model outcome": "Repayment difficulty", "Records": outcomes["repayment_difficulty"]},
                 ]
             )
-            st.dataframe(outcome_data, use_container_width=True, hide_index=True)
+            st.dataframe(outcome_data, width="stretch", hide_index=True)
             threshold = summary["decision_threshold"]
             threshold_label = f"{threshold:.2f}" if threshold is not None else "unavailable"
             st.caption(
@@ -223,11 +231,12 @@ def render_overview() -> None:
         )
     if results is not None:
         split_label = results.attrs.get("split", evaluation_split)
-        evaluation_state = (
-            "No metrics were produced"
-            if results.empty
-            else "Saved evaluation metrics available"
-        )
+        if results.empty:
+            evaluation_state = "No metrics were produced"
+        elif mock_mode:
+            evaluation_state = "No trained-model evaluation metrics available"
+        else:
+            evaluation_state = "Saved evaluation metrics available"
         st.caption(f"{str(split_label).title()} split · {evaluation_state}")
         _render_evaluation(results)
         provenance = results.attrs.get("provenance", {})
@@ -240,7 +249,11 @@ def render_overview() -> None:
         if available_models:
             st.caption(f"Evaluation available for: {', '.join(available_models)}.")
         if provenance.get("lstm_available") is False:
-            st.caption("LSTM evaluation: not available in the current API artifacts.")
+            st.caption(
+                "No trained LSTM evaluation metrics are available in synthetic mock mode."
+                if mock_mode
+                else "LSTM evaluation: not available in the current API artifacts."
+            )
         confusion = results.attrs.get("confusion_matrix")
         if isinstance(confusion, dict):
             with st.expander("Confusion matrix"):

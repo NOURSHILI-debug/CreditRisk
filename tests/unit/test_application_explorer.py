@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from dashboard import data_access
@@ -99,6 +100,36 @@ def test_prediction_view_renders_real_shap_factors_and_api_thresholds(
     assert "Ext Source 2" in app.dataframe[0].value.iloc[0, 0]
 
 
+@pytest.mark.parametrize(
+    ("status", "message", "expected_text", "element"),
+    [
+        ("no_prediction", "No saved result.", "No prediction is available", "warning"),
+        ("model_unavailable", "Model artifacts unavailable.", "Model artifacts unavailable", "warning"),
+        ("unavailable", "Application data unavailable.", "Application data unavailable", "warning"),
+        ("not_found", "Unknown application.", "Unknown application", "warning"),
+        ("invalid", "Invalid API response.", "Invalid API response", "error"),
+    ],
+)
+def test_prediction_view_distinguishes_api_statuses_without_zero_scores(
+    status: str, message: str, expected_text: str, element: str
+) -> None:
+    app = AppTest.from_string(
+        "from dashboard.data_access import CreditRiskPrediction\n"
+        "from dashboard.pages.application_explorer import _render_prediction_result\n"
+        f"_render_prediction_result(CreditRiskPrediction(status={status!r}, message={message!r}))\n"
+    ).run()
+
+    assert not app.exception
+    rendered = " ".join(
+        item.value
+        for item in (*app.warning, *app.error)
+        if isinstance(item.value, str)
+    )
+    assert expected_text in rendered
+    assert len(getattr(app, element)) > 0
+    assert not app.metric
+
+
 def test_unavailable_api_is_reported_without_sample_applicants(monkeypatch) -> None:
     def unavailable(**kwargs):
         raise data_access.DataSourceUnavailableError("API connection refused")
@@ -149,3 +180,87 @@ def test_nonfirst_applicant_selection_survives_details_rerun(monkeypatch) -> Non
     assert not app.exception
     assert app.session_state["selected_application"] == 1002
     assert app.selectbox[2].value == 1002
+
+
+def test_application_search_filters_by_validated_id_and_loads_details(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def get_page(**kwargs):
+        calls.append(kwargs)
+        application_id = kwargs.get("application_id")
+        rows = [
+            {"SK_ID_CURR": application_id, "AMT_CREDIT": 75000}
+        ] if application_id is not None else []
+        return pd.DataFrame(rows), len(rows)
+
+    monkeypatch.setattr(data_access, "get_applications_page", get_page)
+    monkeypatch.setattr(
+        data_access,
+        "get_application_by_id",
+        lambda application_id: ApplicationLookupResult(
+            status="found",
+            application=pd.Series(
+                {"SK_ID_CURR": application_id, "AMT_CREDIT": 75000}
+            ),
+        ),
+    )
+    token = data_access._DATA_MODE_OVERRIDE.set("api")
+    try:
+        app = AppTest.from_string(
+            "from dashboard.pages.application_explorer import render_application_explorer\n"
+            "render_application_explorer()\n"
+        ).run()
+        app.text_input[0].set_value("1002")
+        app.form_submit_button[0].click().run()
+        assert not app.exception
+        assert calls[-1]["application_id"] == 1002
+
+        next(
+            button for button in app.button if button.label == "Load applicant details"
+        ).click().run()
+        assert not app.exception
+        assert app.session_state["selected_application"] == 1002
+        assert "75,000" in str(app.metric)
+    finally:
+        data_access._DATA_MODE_OVERRIDE.reset(token)
+
+
+def test_application_pagination_advances_by_page_size(monkeypatch) -> None:
+    offsets: list[int] = []
+
+    def get_page(*, limit: int, offset: int, **_kwargs):
+        offsets.append(offset)
+        end = min(offset + limit, 30)
+        frame = pd.DataFrame(
+            {"SK_ID_CURR": list(range(100001 + offset, 100001 + end))}
+        )
+        return frame, 30
+
+    monkeypatch.setattr(data_access, "get_applications_page", get_page)
+    token = data_access._DATA_MODE_OVERRIDE.set("api")
+    try:
+        app = AppTest.from_string(
+            "from dashboard.pages.application_explorer import render_application_explorer\n"
+            "render_application_explorer()\n"
+        ).run()
+        assert not app.exception
+        assert offsets == [0]
+
+        next(button for button in app.button if button.label == "Next page").click().run()
+
+        assert not app.exception
+        assert app.session_state["application_page_offset"] == 25
+        assert offsets[-1] == 25
+        assert set(offsets) == {0, 25}
+        assert any("Showing 26–30 of 30" in item.value for item in app.caption)
+        assert app.dataframe[0].value["SK_ID_CURR"].tolist() == [
+            100026,
+            100027,
+            100028,
+            100029,
+            100030,
+        ]
+    finally:
+        data_access._DATA_MODE_OVERRIDE.reset(token)

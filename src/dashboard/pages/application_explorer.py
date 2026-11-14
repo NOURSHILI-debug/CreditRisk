@@ -153,7 +153,7 @@ def _render_application_table(applications: pd.DataFrame) -> None:
     }
     st.dataframe(
         display,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_order=column_order,
         column_config=column_config,
@@ -165,6 +165,10 @@ def render_application_explorer() -> None:
         "Application Explorer",
         "Find an application, review permitted source fields, then inspect its model output and explanation.",
     )
+    if data_access.is_mock_mode():
+        st.warning(
+            "Synthetic mock applications and prediction examples are for demonstration only; they are not real applicant records or trained-model outputs."
+        )
     saved_filter_field = st.session_state.get("application_search_filter_field")
     saved_filter_label = next(
         (
@@ -221,7 +225,8 @@ def render_application_explorer() -> None:
         filter_field = None
 
     try:
-        with st.spinner("Retrieving applicant records from the API..."):
+        provider_label = "synthetic demo provider" if data_access.is_mock_mode() else "API"
+        with st.spinner(f"Retrieving applicant records from the {provider_label}..."):
             applications, total = data_access.get_applications_page(
                 limit=page_size,
                 offset=offset,
@@ -303,10 +308,24 @@ def render_application_explorer() -> None:
     if st.session_state.get("selected_application") == selected_id:
         application = st.session_state.get("selected_application_details")
         if isinstance(application, pd.Series):
-            render_section_heading(f"Application {selected_id}", "Permitted application details from the API.")
-            st.caption("Monetary amounts use source units; the API does not provide a currency code.")
+            detail_source = (
+                "Synthetic demonstration record; not a real applicant."
+                if data_access.is_mock_mode()
+                else "Permitted application details from the API."
+            )
+            render_section_heading(f"Application {selected_id}", detail_source)
+            st.caption(
+                "Synthetic demo amounts; no currency is represented."
+                if data_access.is_mock_mode()
+                else "Monetary amounts use source units; the API does not provide a currency code."
+            )
             _render_application_details(application)
-        if st.button("Run XGBoost prediction and SHAP explanation"):
+        prediction_button_label = (
+            "Generate illustrative prediction and factors"
+            if data_access.is_mock_mode()
+            else "Run XGBoost prediction and SHAP explanation"
+        )
+        if st.button(prediction_button_label):
             try:
                 with st.spinner("Scoring application and computing explanation..."):
                     prediction = data_access.get_credit_risk_prediction(
@@ -326,20 +345,42 @@ def render_application_explorer() -> None:
 
 def _render_prediction_result(prediction: data_access.CreditRiskPrediction) -> None:
     with st.container(border=True):
-        render_section_heading("Model prediction")
+        render_section_heading(
+            "Synthetic illustrative prediction"
+            if data_access.is_mock_mode()
+            else "Model prediction"
+        )
         if prediction.status != "available" or prediction.probability is None:
-            if prediction.status in {"unavailable", "model_unavailable", "no_prediction"}:
+            status_messages = {
+                "no_prediction": (
+                    "No prediction is available for this application.",
+                    "The API did not return a prediction record.",
+                ),
+                "model_unavailable": (
+                    "The prediction model is unavailable.",
+                    "Required model artifacts may be missing or incompatible.",
+                ),
+                "unavailable": (
+                    "Prediction data is unavailable.",
+                    "The API could not retrieve the required application or model data.",
+                ),
+                "not_found": (
+                    "No application was found for this prediction request.",
+                    "The application ID does not identify a source record.",
+                ),
+            }
+            if prediction.status in status_messages:
+                title, fallback = status_messages[prediction.status]
                 render_status(
-                    "No prediction is currently available.",
-                    "The application record may exist while its model output or required artifact is unavailable.",
+                    title,
+                    prediction.message or fallback,
                     kind="warning",
                 )
-            elif prediction.status == "not_found":
-                render_status("No application was found for this prediction request.", kind="warning")
             else:
                 render_status(
                     "The prediction request could not be completed.",
-                    "No score is displayed because the API did not return a valid prediction.",
+                    prediction.message
+                    or "No score is displayed because the API did not return a valid prediction.",
                     kind="error",
                 )
             return
@@ -348,12 +389,12 @@ def _render_prediction_result(prediction: data_access.CreditRiskPrediction) -> N
                 (
                     "Probability of repayment difficulty",
                     f"{prediction.probability:.1%}",
-                    "Model probability returned by the API; not a lending decision.",
+                    "Synthetic illustrative value; not a trained-model probability." if data_access.is_mock_mode() else "Model probability returned by the API; not a lending decision.",
                 ),
                 (
                     "Provisional model risk band",
                     prediction.risk_level or "Unavailable",
-                    "A model category, not an approval or rejection decision.",
+                    "Illustrative synthetic category, not a model decision." if data_access.is_mock_mode() else "A model category, not an approval or rejection decision.",
                 ),
             ],
             columns=2,
@@ -365,7 +406,7 @@ def _render_prediction_result(prediction: data_access.CreditRiskPrediction) -> N
             upper = bands.get("medium_upper")
             if isinstance(lower, (int, float)) and isinstance(upper, (int, float)):
                 st.caption(
-                    f"Provisional model bands: LOW < {lower:.0%}, MEDIUM < "
+                    f"{'Synthetic illustrative bands' if data_access.is_mock_mode() else 'Provisional model bands'}: LOW < {lower:.0%}, MEDIUM < "
                     f"{upper:.0%}, HIGH otherwise. These are not lending decisions."
                 )
             else:
@@ -384,13 +425,28 @@ def _render_prediction_result(prediction: data_access.CreditRiskPrediction) -> N
 
         explanation = prediction.explanation
         if not isinstance(explanation, dict):
-            st.info("The API did not return a SHAP explanation for this prediction.")
+            st.info(
+                "No illustrative explanation is assigned to this prediction."
+                if data_access.is_mock_mode()
+                else "The API did not return a SHAP explanation for this prediction."
+            )
             return
-        render_section_heading("Model explanation", "Feature contributions describe model associations, not causes.")
-        st.write(
-            "These are the features that most influenced the model's estimated "
-            "risk for this application. They describe model associations, not causes."
+        is_synthetic_explanation = explanation.get("synthetic") is True
+        if is_synthetic_explanation:
+            st.warning(
+                "Synthetic illustrative factors only. These are not SHAP values or explanations from a trained model."
+            )
+        render_section_heading(
+            "Illustrative factors" if is_synthetic_explanation else "Model explanation",
+            "Synthetic demonstration factors; not model contributions."
+            if is_synthetic_explanation
+            else "Feature contributions describe model associations, not causes.",
         )
+        if not is_synthetic_explanation:
+            st.write(
+                "These are the features that most influenced the model's estimated "
+                "risk for this application. They describe model associations, not causes."
+            )
         features = explanation.get("top_features")
         if isinstance(features, list) and features:
             rows = []
@@ -408,12 +464,12 @@ def _render_prediction_result(prediction: data_access.CreditRiskPrediction) -> N
                             feature.get("raw_feature") or feature.get("feature")
                         ).replace("_", " ").title(),
                         "Observed value": feature.get("raw_value"),
-                        "Model contribution": direction,
+                        "Illustrative direction" if is_synthetic_explanation else "Model contribution": direction,
                     }
                 )
             if rows:
                 st.dataframe(
-                    pd.DataFrame(rows), use_container_width=True, hide_index=True
+                    pd.DataFrame(rows), width="stretch", hide_index=True
                 )
         summary = explanation.get("summary")
         if isinstance(summary, str) and summary:

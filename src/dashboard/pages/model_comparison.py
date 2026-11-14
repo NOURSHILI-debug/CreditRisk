@@ -18,18 +18,26 @@ _METRIC_HELP = {
 }
 
 
-def _render_metrics(results: pd.DataFrame) -> None:
-    if results.empty:
-        render_status("No evaluation metrics were produced for this split.")
-        return
-    table = results.loc[:, ["model", "metric", "value"]].copy()
-    table["value"] = pd.to_numeric(table["value"], errors="coerce").map(
-        lambda value: f"{value:.1%}" if pd.notna(value) else "N/A"
+def _render_metrics(
+    results: pd.DataFrame,
+    *,
+    comparison_available: bool,
+) -> None:
+    values, statuses, issues = data_access.normalize_model_evaluation_results(results)
+    table = pd.DataFrame(
+        [
+            {"model": model, "metric": metric, "value": values[model][metric]}
+            for model in ("XGBoost", "LSTM")
+            for metric in data_access.MODEL_METRICS
+        ]
+    )
+    table["value"] = table["value"].map(
+        lambda value: f"{value:.1%}" if pd.notna(value) else "Not available"
     )
     display = table.rename(columns={"model": "Model", "metric": "Metric", "value": "Score"})
     st.dataframe(
         display,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Model": st.column_config.TextColumn("Model", width="small"),
@@ -38,7 +46,16 @@ def _render_metrics(results: pd.DataFrame) -> None:
         },
     )
 
-    chart = results.copy()
+    for model, status in statuses.items():
+        st.caption(f"{model}: {status}")
+    for issue in issues:
+        st.warning(issue)
+
+    # A grouped chart visually implies a head-to-head comparison. Show it only
+    # when the data-access contract confirms compatible evaluation provenance.
+    if not comparison_available:
+        return
+    chart = table.copy()
     chart["value"] = pd.to_numeric(chart["value"], errors="coerce")
     chart = chart.dropna(subset=["value"])
     if not chart.empty:
@@ -64,7 +81,7 @@ def _render_metrics(results: pd.DataFrame) -> None:
             hovertemplate="%{fullData.name}<br>%{x}: %{y:.1%}<extra></extra>",
         )
         style_chart(figure, height=370)
-        st.plotly_chart(figure, use_container_width=True)
+        st.plotly_chart(figure, width="stretch")
 
     with st.expander("Metric definitions"):
         for metric, description in _METRIC_HELP.items():
@@ -87,19 +104,29 @@ def _render_confusion_matrix(confusion: object, threshold: object) -> None:
             "Predicted: repayment difficulty": confusion.get("tp"),
         },
     ]
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
     st.caption(
         f"Rows are actual classes; columns are predicted classes. Saved probability threshold: {threshold}."
     )
 
 
 def render_model_comparison() -> None:
+    mock_mode = data_access.is_mock_mode()
     render_page_header(
         "Model Performance",
-        "Compare saved validation or test results. Only metrics present in the API are displayed.",
+        "Review the selected evaluation results and their provenance.",
     )
+    if mock_mode:
+        st.warning(
+            "Synthetic mock applications are for UI demonstration only. No trained-model evaluation metrics are available in mock mode."
+        )
     split = st.selectbox("Evaluation split", ["test", "validation"], key="model_evaluation_split")
-    render_section_heading(f"{split.title()} evaluation", "Scores and confusion-matrix counts come from the selected saved evaluation artifact.")
+    render_section_heading(
+        f"{split.title()} evaluation",
+        "No trained-model evaluation metrics are provided by the synthetic mock provider."
+        if mock_mode
+        else "Scores and confusion-matrix counts come from the selected saved evaluation artifact.",
+    )
 
     results: pd.DataFrame | None = None
     try:
@@ -113,11 +140,24 @@ def render_model_comparison() -> None:
         )
 
     if results is not None:
-        provenance = results.attrs.get("provenance", {})
+        raw_provenance = results.attrs.get("provenance", {})
+        provenance = raw_provenance if isinstance(raw_provenance, dict) else {}
+        _, statuses, _ = data_access.normalize_model_evaluation_results(results)
+        comparison_available, comparison_note = data_access.model_comparison_validity(
+            statuses,
+            results.attrs.get("split"),
+            provenance,
+            synthetic=mock_mode,
+        )
+        render_section_heading("Individual model results")
+        st.info(
+            "A direct XGBoost/LSTM comparison is available."
+            if comparison_available
+            else f"No valid head-to-head comparison: {comparison_note}"
+        )
         if results.empty:
             render_status(f"No evaluation metrics were recorded for the {split} split.")
-        else:
-            _render_metrics(results)
+        _render_metrics(results, comparison_available=comparison_available)
         render_section_heading("Confusion matrix")
         _render_confusion_matrix(
             results.attrs.get("confusion_matrix"),
@@ -159,6 +199,8 @@ def render_model_comparison() -> None:
             )
 
     st.caption(
-        "Only XGBoost validation and test artifacts are currently available. "
+        "Synthetic mock applications are illustrative only; no trained model evaluation results are available."
+        if mock_mode
+        else "Only XGBoost validation and test artifacts are currently available. "
         "No LSTM evaluation scores are present in the API."
     )

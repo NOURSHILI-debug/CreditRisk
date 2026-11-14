@@ -21,6 +21,7 @@ def test_dashboard_defaults_to_fastapi_and_never_uses_mock_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CREDIT_RISK_DATA_PROVIDER", raising=False)
+    monkeypatch.delenv("CREDIT_RISK_DATA_MODE", raising=False)
     assert data_access.get_provider_name() == "fastapi"
     assert not data_access.is_mock_mode()
 

@@ -59,6 +59,9 @@ def test_model_comparison_renders_real_metrics_metadata_and_confusion_matrix(
     assert any("baseline-v2-local" in item.value for item in app.markdown)
     assert len(app.dataframe) == 2
     assert "ROC-AUC" in str(app.dataframe[0].value)
+    assert "Not available" in str(app.dataframe[0].value)
+    assert any("No valid head-to-head comparison" in item.value for item in app.info)
+    assert any("Only XGBoost evaluation results are available" in item.value for item in app.info)
     assert app.dataframe[1].value.iloc[0, 1] == 33397
 
 
@@ -125,3 +128,15 @@ def test_evaluation_normalizer_does_not_fill_missing_model_scores() -> None:
     assert statuses["XGBoost"].startswith("Partially available")
     assert statuses["LSTM"] == "Not available"
     assert issues == []
+
+
+def test_lstm_rows_conflicting_with_unavailable_provenance_are_rejected() -> None:
+    rows = pd.DataFrame(
+        [{"model": "LSTM", "metric": "ROC-AUC", "value": 0.9}]
+    )
+    rows.attrs["provenance"] = {"lstm_available": False}
+    values, statuses, issues = data_access.normalize_model_evaluation_results(rows)
+
+    assert statuses["LSTM"] == "Invalid results"
+    assert values["LSTM"]["ROC-AUC"] is None
+    assert any("conflict with provenance" in issue for issue in issues)
