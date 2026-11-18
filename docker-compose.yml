@@ -27,7 +27,7 @@ services:
   # --------------------------------------------------------------------------
   fastapi:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile.fastapi
     container_name: credit-risk-fastapi
     ports:
@@ -58,7 +58,7 @@ services:
   # --------------------------------------------------------------------------
   streamlit:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile.streamlit
     container_name: credit-risk-streamlit
     ports:
