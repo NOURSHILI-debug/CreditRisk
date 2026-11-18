@@ -216,6 +216,8 @@ pytest
 
 Kafka event replay: see [`docs/kafka_producer.md`](docs/kafka_producer.md).
 
+Kafka event consumption: see [`docs/kafka_consumer.md`](docs/kafka_consumer.md).
+
 ### 6. Run the API
 
 The FastAPI prediction service loads `models/local_v2/` and
