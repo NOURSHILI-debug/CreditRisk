@@ -1,0 +1,60 @@
+# Dockerfile for the Credit Risk Intelligence Streamlit dashboard
+# Person 2 component: dashboard frontend
+#
+# Build:
+#   docker build -t credit-risk-streamlit -f Dockerfile.streamlit .
+#
+# Run (connects to FastAPI at the CREDIT_RISK_API_URL):
+#   docker run -p 8501:8501 \
+#     -e CREDIT_RISK_API_URL=http://fastapi:8000 \
+#     credit-risk-streamlit
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Prevent Python from writing .pyc files and buffering stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src
+
+# Install system dependencies (none required beyond base image)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies reproducibly (Streamlit + agent subset)
+COPY requirements.streamlit.txt ./
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.streamlit.txt
+
+# Copy only the application source code (not tests, docs, or configs)
+COPY src/ ./src/
+
+# Create a non-root user for running the application
+RUN groupadd -r creditrisk && useradd -r -g creditrisk creditrisk
+RUN chown -R creditrisk:creditrisk /app
+USER creditrisk
+
+# Port is configurable via the PORT environment variable (default 8501)
+ENV PORT=8501 \
+    CREDIT_RISK_LOG_LEVEL=INFO \
+    # Backend API URL — must be set to the FastAPI service in production.
+    # Do not hardcode localhost; use the Docker service name in Compose
+    # or the AWS service endpoint in ECS/Fargate.
+    CREDIT_RISK_API_URL=http://localhost:8000 \
+    # Data mode: "api" (default, production) or "mock" (development/testing only)
+    CREDIT_RISK_DATA_MODE=api \
+    # Mock provider settings (only used when CREDIT_RISK_DATA_MODE=mock)
+    CREDIT_RISK_MOCK_SAMPLE_SIZE=300 \
+    CREDIT_RISK_MOCK_SEED=42
+
+# Health check: Streamlit exposes a health endpoint on its server port
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:${PORT}/_stcore/health', timeout=5); raise SystemExit(0 if r.status==200 else 1)"
+
+EXPOSE ${PORT}
+
+# Bind to 0.0.0.0 so the container accepts traffic from the network/load balancer.
+# The port is read from the PORT environment variable (default 8501).
+CMD sh -c "python -m streamlit run src/dashboard/app.py --server.address 0.0.0.0 --server.port ${PORT}"

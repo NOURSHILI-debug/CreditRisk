@@ -1,4 +1,8 @@
 services:
+  # --------------------------------------------------------------------------
+  # Person 1 infrastructure: Redpanda (Kafka-compatible event broker)
+  # Kept unchanged. Person 1 owns Kafka/MSK, S3, Lambda, Glue, SageMaker.
+  # --------------------------------------------------------------------------
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
     container_name: redpanda
@@ -15,3 +19,67 @@ services:
       - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
     ports:
       - "19092:19092"
+
+  # --------------------------------------------------------------------------
+  # Person 2: FastAPI backend
+  # Application backend serving predictions, applications, model metadata,
+  # evaluation, and SHAP explanations.
+  # --------------------------------------------------------------------------
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    container_name: credit-risk-fastapi
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - CREDIT_RISK_LOG_LEVEL=INFO
+      # Model artifact directory. Person 1 must mount or provide these at
+      # runtime; without them the /health endpoint reports "degraded" but the
+      # container still starts.
+      - CREDIT_RISK_MODEL_DIR=models/local_v2
+      - CREDIT_RISK_APPLICATION_DATA=data/raw/application_train.csv
+      - CREDIT_RISK_CORS_ORIGINS=http://localhost:8501,http://127.0.0.1:8501
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5); raise SystemExit(0 if r.status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    # Note: model artifacts (models/local_v2/) and the dataset
+    # (data/raw/application_train.csv) are gitignored and not present in the
+    # repository. Mount them at runtime if you want /health to report "ok".
+
+  # --------------------------------------------------------------------------
+  # Person 2: Streamlit dashboard
+  # Interactive dashboard frontend. Communicates with FastAPI via the
+  # service name "fastapi" on the internal Docker network.
+  # --------------------------------------------------------------------------
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: credit-risk-streamlit
+    ports:
+      - "8501:8501"
+    depends_on:
+      fastapi:
+        condition: service_healthy
+    environment:
+      - PORT=8501
+      - CREDIT_RISK_LOG_LEVEL=INFO
+      # Backend API URL — uses the FastAPI service name on the internal
+      # Docker network. Do not use localhost here inside Docker.
+      - CREDIT_RISK_API_URL=http://fastapi:8000
+      # Data mode: "api" (production default). Use "mock" only for
+      # development/testing when the API is unavailable.
+      - CREDIT_RISK_DATA_MODE=api
+      - CREDIT_RISK_MOCK_SAMPLE_SIZE=300
+      - CREDIT_RISK_MOCK_SEED=42
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=5); raise SystemExit(0 if r.status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3

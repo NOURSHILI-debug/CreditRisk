@@ -1,0 +1,97 @@
+# Git
+.git/
+.gitignore
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Logs
+*.log
+logs/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Data files (gitignored, not in repo)
+data/raw/
+data/interim/
+data/processed/
+
+# ML artifacts (gitignored, not in repo)
+artifacts/
+models/
+checkpoints/
+*.pt
+*.pth
+*.pkl
+*.joblib
+*.onnx
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Code quality
+.ruff_cache/
+.mypy_cache/
+
+# Generated SHAP report data
+docs/figures/shap/top_contributions.csv
+docs/figures/shap/shap_metadata.json
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfstate.*
+
+# Local lake storage
+local_lake/
+
+# Test outputs
+pytest_results.txt
+
+# AWS
+.aws/
+.aws-sam/
+*.pem
+*.key

@@ -1,0 +1,58 @@
+# Dockerfile for the Credit Risk Intelligence FastAPI backend
+# Person 2 component: application backend
+#
+# Build:
+#   docker build -t credit-risk-fastapi -f Dockerfile.fastapi .
+#
+# Run (local, without model artifacts — health endpoint reports degraded):
+#   docker run -p 8000:8000 credit-risk-fastapi
+#
+# Run (with model artifacts and data mounted):
+#   docker run -p 8000:8000 \
+#     -e CREDIT_RISK_MODEL_DIR=/app/models/local_v2 \
+#     -e CREDIT_RISK_APPLICATION_DATA=/app/data/raw/application_train.csv \
+#     credit-risk-fastapi
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Prevent Python from writing .pyc files and buffering stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src
+
+# Install system dependencies (none required beyond base image)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies reproducibly (FastAPI-only subset)
+COPY requirements.fastapi.txt ./
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.fastapi.txt
+
+# Copy only the application source code (not tests, docs, or configs)
+COPY src/ ./src/
+
+# Create a non-root user for running the application
+RUN groupadd -r creditrisk && useradd -r -g creditrisk creditrisk
+RUN chown -R creditrisk:creditrisk /app
+USER creditrisk
+
+# Port is configurable via the PORT environment variable (default 8000)
+ENV PORT=8000 \
+    CREDIT_RISK_LOG_LEVEL=INFO
+
+# Health check: the /health endpoint returns 200 when the process is alive.
+# The `status` field in the body distinguishes "ok" (model + data loaded)
+# from "degraded" (model or data missing). Use a readiness probe that checks
+# status == "ok" if ML-service readiness is required.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:${PORT}/health', timeout=5); raise SystemExit(0 if r.status==200 else 1)"
+
+EXPOSE ${PORT}
+
+# Bind to 0.0.0.0 so the container accepts traffic from the network/load balancer.
+# The port is read from the PORT environment variable (default 8000).
+CMD sh -c "python -m uvicorn api.main:app --app-dir src --host 0.0.0.0 --port ${PORT}"
