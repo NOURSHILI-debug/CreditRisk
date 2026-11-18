@@ -214,6 +214,8 @@ pre-commit install
 pytest
 ```
 
+Kafka event replay: see [`docs/kafka_producer.md`](docs/kafka_producer.md).
+
 ### 6. Run the API
 
 The FastAPI prediction service loads `models/local_v2/` and
