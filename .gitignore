@@ -113,3 +113,4 @@ docs/figures/shap/shap_metadata.json
 *.tfstate.*
 sagemaker_run/**/*.csv
 sagemaker_run/**/xgboost_baseline.json
+local_lake/
