@@ -1,0 +1,252 @@
+{
+  "artifact_version": "1.0",
+  "model_name": "XGBoost",
+  "model_version": "baseline-v2-local",
+  "model_hash": "e85222b2adfe8e23e4602da2be9628629a66b2e190b8965fbe13be3cd56419c0",
+  "generated_at": "2026-11-13T21:54:52.614226+00:00",
+  "training_date": "2026-11-13T21:53:24.665322+00:00",
+  "target": {
+    "name": "TARGET",
+    "positive_class": 1,
+    "positive_label": "repayment difficulty",
+    "probability_semantics": "P(TARGET=1)"
+  },
+  "seed": 42,
+  "threshold": 0.5,
+  "split_protocol": {
+    "method": "stratified train/validation/test",
+    "ratios": {
+      "train": 0.7,
+      "validation": 0.15,
+      "test": 0.15
+    },
+    "random_state": 42,
+    "fit_preprocessor_on": "train only",
+    "notes": "First split 70/30; second split 50/50 of the 30% holdout."
+  },
+  "splits": {
+    "train": {
+      "n_samples": 215257,
+      "class_counts": {
+        "0": 197880,
+        "1": 17377
+      },
+      "positive_rate": 0.08072675917624049
+    },
+    "validation": {
+      "n_samples": 46127,
+      "class_counts": {
+        "0": 42403,
+        "1": 3724
+      },
+      "positive_rate": 0.08073362672621241
+    },
+    "test": {
+      "n_samples": 46127,
+      "class_counts": {
+        "0": 42403,
+        "1": 3724
+      },
+      "positive_rate": 0.08073362672621241
+    }
+  },
+  "scale_pos_weight": 11.38746619094205,
+  "scale_pos_weight_formula": "n_neg/n_pos computed on TRAIN ONLY",
+  "metrics": {
+    "validation": {
+      "threshold": 0.5,
+      "n_samples": 46127,
+      "class_counts": {
+        "0": 42403,
+        "1": 3724
+      },
+      "roc_auc": 0.7498079619034717,
+      "pr_auc": 0.2410507054188399,
+      "precision": 0.1878271670659214,
+      "recall": 0.5684747583243824,
+      "f1": 0.2823607869289763,
+      "confusion_matrix": {
+        "labels": [
+          0,
+          1
+        ],
+        "tn": 33249,
+        "fp": 9154,
+        "fn": 1607,
+        "tp": 2117,
+        "matrix": [
+          [
+            33249,
+            9154
+          ],
+          [
+            1607,
+            2117
+          ]
+        ]
+      },
+      "predicted_positive_rate": 0.24434712857979057,
+      "observed_positive_rate": 0.08073362672621241
+    },
+    "test": {
+      "threshold": 0.5,
+      "n_samples": 46127,
+      "class_counts": {
+        "0": 42403,
+        "1": 3724
+      },
+      "roc_auc": 0.7564214038723573,
+      "pr_auc": 0.23617527019396528,
+      "precision": 0.19466332378223497,
+      "recall": 0.583780880773362,
+      "f1": 0.29196884233145315,
+      "confusion_matrix": {
+        "labels": [
+          0,
+          1
+        ],
+        "tn": 33409,
+        "fp": 8994,
+        "fn": 1550,
+        "tp": 2174,
+        "matrix": [
+          [
+            33409,
+            8994
+          ],
+          [
+            1550,
+            2174
+          ]
+        ]
+      },
+      "predicted_positive_rate": 0.24211416307151992,
+      "observed_positive_rate": 0.08073362672621241
+    }
+  },
+  "metric_definitions": {
+    "threshold": "Probability cutoff used to convert P(TARGET=1) into a binary prediction.",
+    "roc_auc": "Area under the receiver operating characteristic curve.",
+    "pr_auc": "Area under the precision-recall curve (average_precision_score).",
+    "precision": "TP / (TP + FP) at the stated threshold; zero_division=0.",
+    "recall": "TP / (TP + FN) at the stated threshold; zero_division=0.",
+    "f1": "Harmonic mean of precision and recall at the stated threshold.",
+    "confusion_matrix": "Confusion matrix with labels [0, 1] at the stated threshold.",
+    "predicted_positive_rate": "Share of rows predicted positive at the stated threshold.",
+    "observed_positive_rate": "Share of rows with TARGET=1."
+  },
+  "artifacts": {
+    "model": {
+      "path": "/opt/ml/processing/model/xgboost_baseline.json",
+      "filename": "xgboost_baseline.json",
+      "sha256": "e85222b2adfe8e23e4602da2be9628629a66b2e190b8965fbe13be3cd56419c0",
+      "size_bytes": 5920413,
+      "format": "xgboost native JSON"
+    },
+    "preprocessor": {
+      "path": "/opt/ml/processing/model/preprocessor.pkl",
+      "filename": "preprocessor.pkl",
+      "sha256": "cc225934d0766b08f1fcb1cdda99bf915437c397470a0a775a701bad29eabe34",
+      "size_bytes": 19846,
+      "format": "joblib sklearn Pipeline"
+    },
+    "feature_columns": {
+      "path": "/opt/ml/processing/model/feature_columns.json",
+      "filename": "feature_columns.json",
+      "sha256": "d6a501e1c4383ce6b1775026773e92aa41673c28a164db2c0b247cbf0b46f3c4",
+      "size_bytes": 2786,
+      "format": "JSON list of raw input feature names"
+    },
+    "preprocessor_metadata": {
+      "path": "/opt/ml/processing/model/preprocessor_metadata.json",
+      "filename": "preprocessor_metadata.json",
+      "sha256": "067261bd40f032c60795819e331f7f76290220bf8d05db3b1505e8dd50b8010e",
+      "size_bytes": 18604
+    },
+    "model_metadata": {
+      "path": "/opt/ml/processing/model/model_metadata.json",
+      "filename": "model_metadata.json",
+      "sha256": "d4e1501af5f61bdcc6ab200802d7b73f02b5cfb184df1753d74dc4de9c58c77a",
+      "size_bytes": 465
+    },
+    "validation_predictions": {
+      "path": "/opt/ml/processing/model/validation_predictions.csv",
+      "filename": "validation_predictions.csv",
+      "sha256": "31dbd086430983303814e3ea8f447162f0fb8567a949d2860e074a8154ce6a65",
+      "size_bytes": 1431852
+    },
+    "test_predictions": {
+      "path": "/opt/ml/processing/model/test_predictions.csv",
+      "filename": "test_predictions.csv",
+      "sha256": "e8493980ecd4ca5c82a4ae222a25af1163b28074290d69dc952ca37e4f8f326b",
+      "size_bytes": 1431885
+    }
+  },
+  "library_versions": {
+    "python": "3.12.15",
+    "xgboost": "3.2.0",
+    "scikit_learn": "1.6.1",
+    "pandas": "2.2.3",
+    "numpy": "2.1.0",
+    "scipy": "1.15.0",
+    "joblib": "1.5.3",
+    "platform": "Linux-6.12.113-138.209.amzn2023.x86_64-x86_64-with-glibc2.34"
+  },
+  "training_elapsed_seconds": 87.94909192600001,
+  "baseline_reference": {
+    "source": "previous Colab baseline (context only, not a tuning target)",
+    "test": {
+      "roc_auc": 0.7571,
+      "pr_auc": 0.2386,
+      "precision": 0.1943,
+      "recall": 0.5835,
+      "f1": 0.2915
+    }
+  },
+  "baseline_comparison": {
+    "tolerance": 0.01,
+    "metrics": {
+      "roc_auc": {
+        "baseline": 0.7571,
+        "actual": 0.7564214038723573,
+        "delta": -0.00067859612764265,
+        "abs_delta": 0.00067859612764265,
+        "exceeds_tolerance": false,
+        "tolerance": 0.01
+      },
+      "pr_auc": {
+        "baseline": 0.2386,
+        "actual": 0.23617527019396528,
+        "delta": -0.0024247298060347255,
+        "abs_delta": 0.0024247298060347255,
+        "exceeds_tolerance": false,
+        "tolerance": 0.01
+      },
+      "precision": {
+        "baseline": 0.1943,
+        "actual": 0.19466332378223497,
+        "delta": 0.00036332378223496997,
+        "abs_delta": 0.00036332378223496997,
+        "exceeds_tolerance": false,
+        "tolerance": 0.01
+      },
+      "recall": {
+        "baseline": 0.5835,
+        "actual": 0.583780880773362,
+        "delta": 0.00028088077336196893,
+        "abs_delta": 0.00028088077336196893,
+        "exceeds_tolerance": false,
+        "tolerance": 0.01
+      },
+      "f1": {
+        "baseline": 0.2915,
+        "actual": 0.29196884233145315,
+        "delta": 0.00046884233145316756,
+        "abs_delta": 0.00046884233145316756,
+        "exceeds_tolerance": false,
+        "tolerance": 0.01
+      }
+    },
+    "findings": []
+  }
+}

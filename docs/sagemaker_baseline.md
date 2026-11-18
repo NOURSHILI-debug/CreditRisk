@@ -10,6 +10,8 @@ passed. Use the AWS venv only for the launcher.
 
 The job reads `s3://credit-risk-498265543404/raw/application_train.csv`. It uses
 one `ml.m5.large` instance and SageMaker XGBoost framework version `3.2-0`.
+The launcher supplies the regional image URI explicitly because SageMaker SDK
+2.257.7 does not recognize `3.2-0` in its built-in image map.
 The maximum run time is 30 minutes. Spot instances are off. The estimate uses
 $0.115 per instance hour and is about $0.06. S3 storage and data transfer are
 not included. Actual billed compute may be lower if the job finishes early.

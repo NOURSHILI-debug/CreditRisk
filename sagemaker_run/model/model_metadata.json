@@ -1,0 +1,15 @@
+{
+  "model_name": "XGBoost",
+  "model_version": "baseline-v2-local",
+  "model_hash": "e85222b2adfe8e23e4602da2be9628629a66b2e190b8965fbe13be3cd56419c0",
+  "training_date": "2026-11-13T21:53:24.665322+00:00",
+  "feature_columns_count": 120,
+  "post_transform_feature_count": 306,
+  "model_feature_count": 306,
+  "target": {
+    "name": "TARGET",
+    "positive_class": 1,
+    "positive_label": "repayment difficulty",
+    "probability_semantics": "P(TARGET=1)"
+  }
+}

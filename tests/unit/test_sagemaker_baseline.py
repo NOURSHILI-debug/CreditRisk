@@ -8,6 +8,31 @@ import pandas as pd
 from sklearn.metrics import roc_curve
 
 from training.train_xgboost import compute_ks
+from aws.sagemaker.run_sagemaker import FRAMEWORK_IMAGE_URI, job_config
+
+
+def test_launcher_pins_sagemaker_xgboost_image() -> None:
+    config = job_config()
+
+    assert config["framework_version"] == "3.2-0"
+    assert config["image_uri"] == FRAMEWORK_IMAGE_URI
+
+
+def test_launcher_defaults_to_g5_and_reports_estimated_max_cost() -> None:
+    config = job_config()
+
+    assert config["instance_type"] == "ml.g5.xlarge"
+    assert config["max_run_seconds"] == 1200
+    assert config["use_spot_instances"] is False
+    assert config["estimated_hourly_rate_usd"] == 1.40
+    assert config["hourly_rate_is_estimate"] is True
+    assert config["max_estimated_compute_cost_usd"] == 0.47
+
+
+def test_launcher_accepts_instance_type_override() -> None:
+    config = job_config(instance_type="ml.g5.2xlarge")
+
+    assert config["instance_type"] == "ml.g5.2xlarge"
 
 
 def test_compute_ks_matches_roc_curve() -> None:

@@ -12,14 +12,17 @@ ROLE_ARN = "arn:aws:iam::498265543404:role/LabRole"
 INPUT_URI = f"s3://{BUCKET}/raw/application_train.csv"
 OUTPUT_PREFIX = f"s3://{BUCKET}/reports/sagemaker_v1"
 MODEL_PREFIX = f"s3://{BUCKET}/models/sagemaker_v1"
-INSTANCE_TYPE = "ml.m5.large"
+INSTANCE_TYPE = "ml.g5.xlarge"
 FRAMEWORK_VERSION = "3.2-0"
-MAX_RUN_SECONDS = 1800
-# us-east-1 Linux On-Demand rate; excludes storage and data transfer.
-HOURLY_RATE_USD = 0.115
+FRAMEWORK_IMAGE_URI = (
+    "683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-xgboost:3.2-0"
+)
+MAX_RUN_SECONDS = 1200
+# Approximate GPU instance rate; this is an estimate, not a live quote.
+HOURLY_RATE_ESTIMATE_USD = 1.40
 
 
-def job_config() -> dict[str, object]:
+def job_config(instance_type: str = INSTANCE_TYPE) -> dict[str, object]:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return {
         "job_name": f"credit-risk-xgb-baseline-{timestamp}",
@@ -28,18 +31,21 @@ def job_config() -> dict[str, object]:
         "input": INPUT_URI,
         "output_path": OUTPUT_PREFIX,
         "model_prefix": MODEL_PREFIX,
-        "instance_type": INSTANCE_TYPE,
+        "instance_type": instance_type,
         "instance_count": 1,
         "max_run_seconds": MAX_RUN_SECONDS,
         "use_spot_instances": False,
         "framework": "sagemaker.xgboost.estimator.XGBoost",
         "framework_version": FRAMEWORK_VERSION,
+        "image_uri": FRAMEWORK_IMAGE_URI,
         "entry_point": "train.py",
         "source_dir": "aws/sagemaker",
         "dependencies": ["src"],
         "tags": [{"Key": "project", "Value": "credit-risk"}],
-        "estimated_cost_usd": round(
-            HOURLY_RATE_USD * MAX_RUN_SECONDS / 3600, 4
+        "estimated_hourly_rate_usd": HOURLY_RATE_ESTIMATE_USD,
+        "hourly_rate_is_estimate": True,
+        "max_estimated_compute_cost_usd": round(
+            HOURLY_RATE_ESTIMATE_USD * MAX_RUN_SECONDS / 3600, 2
         ),
     }
 
@@ -59,9 +65,10 @@ def launch(config: dict[str, object]) -> tuple[str, str, str]:
         dependencies=["src"],
         role=ROLE_ARN,
         framework_version=FRAMEWORK_VERSION,
+        image_uri=FRAMEWORK_IMAGE_URI,
         py_version="py3",
         instance_count=1,
-        instance_type=INSTANCE_TYPE,
+        instance_type=str(config["instance_type"]),
         output_path=OUTPUT_PREFIX,
         max_run=MAX_RUN_SECONDS,
         use_spot_instances=False,
@@ -95,10 +102,21 @@ def main() -> None:
     mode.add_argument(
         "--dry-run", action="store_true", help="Print config only (default)."
     )
+    parser.add_argument(
+        "--instance-type",
+        default=INSTANCE_TYPE,
+        help=f"SageMaker training instance type (default: {INSTANCE_TYPE}).",
+    )
     args = parser.parse_args()
-    config = job_config()
+    config = job_config(instance_type=args.instance_type)
     if not args.run:
         print(json.dumps(config, indent=2))
+        print(
+            "Cost estimate: "
+            f"~${HOURLY_RATE_ESTIMATE_USD:.2f}/hour (estimate); "
+            "worst case for 1200 seconds: "
+            f"${config['max_estimated_compute_cost_usd']:.2f} compute."
+        )
         print(
             "S3 outputs: "
             f"model={config['model_prefix']}/{config['job_name']}/model.tar.gz; "
