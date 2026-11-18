@@ -1,0 +1,17 @@
+# Production dependencies for the Streamlit dashboard container
+# Person 2 component: dashboard frontend (with embedded LangGraph agent)
+#
+# Includes only what is needed to run the dashboard, call the FastAPI API,
+# and execute the LangGraph AI agent.
+#
+# Build with:
+#   pip install -r requirements.streamlit.txt
+
+streamlit>=1.31.0
+pandas>=2.0.0
+numpy>=1.24.0
+plotly>=5.18.0
+httpx==0.28.1
+langgraph>=0.2.0
+langchain-openai>=0.2.0
+langchain-ollama>=1.1.0

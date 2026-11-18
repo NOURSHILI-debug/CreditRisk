@@ -1,0 +1,88 @@
+{
+  "family": "credit-risk-streamlit",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/credit-risk-streamlit-task",
+  "containerDefinitions": [
+    {
+      "name": "credit-risk-streamlit",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/credit-risk-streamlit:IMAGE_TAG",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8501,
+          "hostPort": 8501,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "PORT",
+          "value": "8501"
+        },
+        {
+          "name": "CREDIT_RISK_LOG_LEVEL",
+          "value": "INFO"
+        },
+        {
+          "name": "CREDIT_RISK_API_URL",
+          "value": "http://credit-risk-fastapi.service.connect:8000"
+        },
+        {
+          "name": "CREDIT_RISK_DATA_MODE",
+          "value": "api"
+        },
+        {
+          "name": "CREDIT_RISK_MOCK_SAMPLE_SIZE",
+          "value": "300"
+        },
+        {
+          "name": "CREDIT_RISK_MOCK_SEED",
+          "value": "42"
+        },
+        {
+          "name": "ENVIRONMENT",
+          "value": "production"
+        }
+      ],
+      "secrets": [],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/credit-risk-streamlit",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "streamlit"
+        },
+        "secretOptions": []
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:8501/_stcore/health || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 15
+      },
+      "linuxParameters": {}
+    }
+  ],
+  "tags": [
+    {
+      "key": "project",
+      "value": "credit-risk"
+    },
+    {
+      "key": "component",
+      "value": "streamlit"
+    },
+    {
+      "key": "owner",
+      "value": "person2"
+    }
+  ]
+}

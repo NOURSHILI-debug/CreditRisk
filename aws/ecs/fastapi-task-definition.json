@@ -1,0 +1,89 @@
+{
+  "family": "credit-risk-fastapi",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/credit-risk-fastapi-task",
+  "containerDefinitions": [
+    {
+      "name": "credit-risk-fastapi",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/credit-risk-fastapi:IMAGE_TAG",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "PORT",
+          "value": "8000"
+        },
+        {
+          "name": "CREDIT_RISK_LOG_LEVEL",
+          "value": "INFO"
+        },
+        {
+          "name": "CREDIT_RISK_MODEL_DIR",
+          "value": "models/local_v2"
+        },
+        {
+          "name": "CREDIT_RISK_APPLICATION_DATA",
+          "value": "data/raw/application_train.csv"
+        },
+        {
+          "name": "CREDIT_RISK_CORS_ORIGINS",
+          "value": "https://streamlit.example.com,https://dashboard.example.com"
+        },
+        {
+          "name": "ENVIRONMENT",
+          "value": "production"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "OPENAI_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:credit-risk/openai-api-key"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/credit-risk-fastapi",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "fastapi"
+        },
+        "secretOptions": []
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:8000/health || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 10
+      },
+      "linuxParameters": {}
+    }
+  ],
+  "tags": [
+    {
+      "key": "project",
+      "value": "credit-risk"
+    },
+    {
+      "key": "component",
+      "value": "fastapi"
+    },
+    {
+      "key": "owner",
+      "value": "person2"
+    }
+  ]
+}
