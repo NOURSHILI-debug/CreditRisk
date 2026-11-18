@@ -1,0 +1,50 @@
+{
+  "model_name": "XGBoost",
+  "model_version": "baseline-v2-local",
+  "training_date": "2026-11-13T21:53:24.665322+00:00",
+  "params": {
+    "objective": "binary:logistic",
+    "n_estimators": 1000,
+    "max_depth": 6,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "random_state": 42,
+    "eval_metric": [
+      "auc",
+      "aucpr"
+    ],
+    "tree_method": "hist",
+    "n_jobs": -1,
+    "device": "cpu",
+    "scale_pos_weight": 11.38746619094205
+  },
+  "scale_pos_weight": 11.38746619094205,
+  "feature_columns_count": 120,
+  "post_transform_feature_count": 306,
+  "model_feature_count": 306,
+  "fit_seconds": 71.302410044,
+  "elapsed_seconds": 87.94909192600001,
+  "model_metadata_artifact": {
+    "path": "/opt/ml/processing/model/model_metadata.json",
+    "filename": "model_metadata.json",
+    "sha256": "d4e1501af5f61bdcc6ab200802d7b73f02b5cfb184df1753d74dc4de9c58c77a",
+    "size_bytes": 465
+  },
+  "evaluation_artifact": {
+    "path": "/opt/ml/processing/model/evaluation_results.json",
+    "filename": "evaluation_results.json",
+    "sha256": "3fddecf3822495c199c6f8f334447dc146fcea8babae14a2c39237a3da271787",
+    "size_bytes": 7461
+  },
+  "library_versions": {
+    "python": "3.12.15",
+    "xgboost": "3.2.0",
+    "scikit_learn": "1.6.1",
+    "pandas": "2.2.3",
+    "numpy": "2.1.0",
+    "scipy": "1.15.0",
+    "joblib": "1.5.3",
+    "platform": "Linux-6.12.113-138.209.amzn2023.x86_64-x86_64-with-glibc2.34"
+  }
+}

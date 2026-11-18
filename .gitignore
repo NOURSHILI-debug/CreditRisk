@@ -111,3 +111,5 @@ docs/figures/shap/shap_metadata.json
 *.tfstate.backup
 *.tfvars
 *.tfstate.*
+sagemaker_run/**/*.csv
+sagemaker_run/**/xgboost_baseline.json
