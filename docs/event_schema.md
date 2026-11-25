@@ -13,7 +13,7 @@ from `data/raw/application_train.csv` are replayed as these events.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `event_id` | string (UUID) | yes | Unique identifier for this event. |
+| `event_id` | string (UUID) | yes | Unique identifier for this event; replay uses a deterministic UUID derived from `schema_version` and `SK_ID_CURR`. |
 | `event_timestamp` | string (ISO 8601) | yes | Time the event was produced, e.g. `2026-11-11T10:15:30Z`. |
 | `SK_ID_CURR` | integer | yes | Applicant ID from `application_train.csv`. Must be a positive integer. |
 | `schema_version` | string | yes | Must be `schema-v1`. |

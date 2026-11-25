@@ -11,7 +11,8 @@ path, not live banking traffic.
 
 1. `read_applications` reads only the allowlisted columns from the CSV, with an
    optional row limit.
-2. `build_event` creates one event per row: a UUID `event_id`, a simulated
+2. `build_event` creates one event per row: a UUID `event_id` derived
+   deterministically from `schema_version` and `SK_ID_CURR`, a simulated
    `event_timestamp`, `schema_version`, `SK_ID_CURR`, and the schema feature
    fields.
 3. Missing values (`NaN`) become `null`. Integer fields are converted to
@@ -121,6 +122,9 @@ docker exec -it redpanda rpk topic consume loan-applications --brokers localhost
 
 - `SK_ID_CURR` is the message key so all events for one applicant share a
   partition and stay in order.
+- `event_id` is a deterministic UUID5 derived from `schema_version` and
+  `SK_ID_CURR`, so replaying the same row overwrites the same storage object
+  instead of creating a duplicate.
 - `TARGET` is excluded because it is the historical outcome label, is not
   available at prediction time, and would leak the label.
 - Timestamps are simulated because replay uses old CSV rows; a fixed start plus
