@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -108,6 +109,16 @@ def test_event_timestamp_is_valid_iso_utc_and_increases():
     assert _is_iso_utc(first["event_timestamp"])
     assert first_time.tzinfo is not None
     assert second_time - first_time == timedelta(seconds=3)
+
+
+def test_build_event_id_is_deterministic_for_replayed_rows():
+    first = kp.build_event(_row(), 0)
+    replay = kp.build_event(_row(), 7)
+    other = kp.build_event(_row(SK_ID_CURR=100003), 0)
+
+    uuid.UUID(first["event_id"])
+    assert first["event_id"] == replay["event_id"]
+    assert first["event_id"] != other["event_id"]
 
 
 def test_make_invalid_event_removes_or_breaks_required_field():

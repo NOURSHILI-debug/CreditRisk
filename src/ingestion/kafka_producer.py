@@ -55,9 +55,13 @@ def _event_timestamp(event_index: int) -> str:
     return moment.isoformat().replace("+00:00", "Z")
 
 
+def _event_id(sk_id: Any) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"credit-risk:{SCHEMA_VERSION}:{sk_id}"))
+
+
 def build_event(row: Mapping[str, Any], event_index: int) -> dict[str, Any]:
     event: dict[str, Any] = {
-        "event_id": str(uuid.uuid4()),
+        "event_id": _event_id(row.get("SK_ID_CURR")),
         "event_timestamp": _event_timestamp(event_index),
         "schema_version": SCHEMA_VERSION,
     }
